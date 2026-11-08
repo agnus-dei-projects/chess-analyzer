@@ -84,7 +84,7 @@ function pieces(chess, color) {
 }
 
 // Pièces ennemies réellement menacées par la pièce placée sur `from`.
-function targets(fen, from) {
+export function targets(fen, from) {
   const c = new Chess(fen);
   const me = c.get(from);
   if (!me) return [];
@@ -100,7 +100,7 @@ function targets(fen, from) {
 const DIRS = { b: [[1, 1], [1, -1], [-1, 1], [-1, -1]], r: [[1, 0], [-1, 0], [0, 1], [0, -1]] };
 DIRS.q = [...DIRS.b, ...DIRS.r];
 
-function pinBy(fen, from) {
+export function pinBy(fen, from) {
   const c = new Chess(fen);
   const me = c.get(from);
   if (!me || !DIRS[me.type]) return null;
@@ -141,6 +141,14 @@ export function evalWords(score) {
   const v = Math.abs(score.value) / 100;
   if (v < 0.3) return 'une position équilibrée';
   return `un avantage de ${v.toFixed(1).replace('.', ',')} pion${v >= 2 ? 's' : ''} pour ${side(score.value > 0 ? 'w' : 'b')}`;
+}
+
+// Matériel gagné au bout de la variante, une fois les prises terminées.
+function lineDelta(startFen, steps, col, min = 8) {
+  if (!steps.length) return 0;
+  let i = Math.min(min, steps.length) - 1;
+  while (i + 1 < steps.length && steps[i + 1].m.captured) i += 1;
+  return materialFor(steps[i].fen, col) - materialFor(startFen, col);
 }
 
 const pts = (x) => {
@@ -187,7 +195,8 @@ function trapSentence(ply, mover, steps) {
     if (!s) break;
     if (steps.slice(0, i + 1).some((x) => x.m.from === ply.to || x.m.to === ply.to)) break;
     const t = trappedAt(s.fen, ply.to);
-    if (t) return `${cap(the(t.piece.type, mover))} en ${tok(ply.to)} est ${t.attacked ? 'piégé' : 'bloqué'}${FEM[t.piece.type] ? 'e' : ''} : ${ELLE(t.piece.type)} n’a plus aucune case sûre.`;
+    const lost = steps.slice(i, i + 10).some((x) => x.m.color !== mover && x.m.captured === t?.piece.type);
+    if (t && lost) return `${cap(the(t.piece.type, mover))} en ${tok(ply.to)} est ${t.attacked ? 'piégé' : 'bloqué'}${FEM[t.piece.type] ? 'e' : ''} : ${ELLE(t.piece.type)} n’a plus aucune case sûre.`;
   }
   return null;
 }
@@ -209,7 +218,8 @@ function negative(ctx) {
   if (trap) out.push(trap);
   const first = walk(fenBefore, [ply.uci])[0];
   const ex = exchange(first ? [first, ...steps] : steps, mover);
-  if (ex.net < 0) {
+  const lineLoss = lineDelta(fenBefore, first ? [first, ...steps] : steps, mover);
+  if (ex.net < 0 && lineLoss < 0) {
     const lost = listPieces(ex.lost);
     const won = listPieces(ex.won);
     let said = '';
@@ -226,6 +236,7 @@ function negative(ctx) {
     if (lost && (lost !== said || won)) out.push(`Au final, ${side(mover)} perdent ${lost}${won ? ` contre ${won}` : ''}.`);
     return { out, r };
   }
+  if (lineLoss >= 0) return { out, r }; // sans perte réelle, un motif tactique n'explique rien
   const fork = targets(r.fen, r.m.to);
   if (fork.length >= 2) { out.push(`Ça permet ${tok(r.m.san)}, qui attaque à la fois ${the(fork[0].type, fork[0].color)} en ${tok(fork[0].square)} et ${the(fork[1].type, fork[1].color)} en ${tok(fork[1].square)}.`); return { out, r }; }
   const pin = pinBy(r.fen, r.m.to);
@@ -233,7 +244,7 @@ function negative(ctx) {
   const promo = steps.slice(0, 8).find((s) => s.m.promotion && s.m.color !== mover);
   if (promo) { out.push(`Ça laisse l’adversaire promouvoir : ${lineOf(steps, 5)}.`); return { out, r }; }
   const checks = steps.slice(0, 6).filter((s) => s.m.color !== mover && s.m.san.includes('+')).length;
-  if (checks >= 2) { out.push(`${cap(the('k', mover))} subit une série d’échecs : ${lineOf(steps, 5)}.`); return { out, r }; }
+  if (checks >= 2 && lineLoss <= -3) { out.push(`${cap(the('k', mover))} subit une série d’échecs : ${lineOf(steps, 5)}.`); return { out, r }; }
   return { out, r };
 }
 
@@ -242,7 +253,7 @@ function negative(ctx) {
 const allPieces = (fen) => new Chess(fen).board().flat().filter(Boolean);
 const fileIdx = (sq) => sq.charCodeAt(0) - 97;
 
-function pawnStats(fen, color) {
+export function pawnStats(fen, color) {
   const all = allPieces(fen);
   const mine = all.filter((p) => p.type === 'p' && p.color === color);
   const theirs = all.filter((p) => p.type === 'p' && p.color !== color);
@@ -257,7 +268,7 @@ function pawnStats(fen, color) {
   return { doubled, isolated, passed };
 }
 
-function kingShield(fen, color) {
+export function kingShield(fen, color) {
   const all = allPieces(fen);
   const k = all.find((p) => p.type === 'k' && p.color === color);
   const f = fileIdx(k.square);
@@ -283,14 +294,18 @@ export function moveAction(m) {
   return `jouer ${FEM[m.piece] ? 'la' : 'le'} ${NAME[m.piece]} en ${tok(m.to)}`;
 }
 
-function threatFragment(first, threat, mover) {
+function threatFragment(first, threat, mover, score) {
   if (!threat || !threat.pv || !threat.pv.length) return null;
   if (threat.score.type === 'mate' && threat.score.value > 0 && threat.score.value <= 4) return `ça menace un mat en ${threat.score.value}`;
   const steps = walk(threat.fen, threat.pv);
   if (!steps.length) return null;
   const m = steps[0].m;
-  if (m.captured && exchange(steps, mover).net > 0) return `ça menace de prendre ${the(m.captured, opp(mover))} en ${tok(m.to)}`;
-  if (m.promotion) return `ça menace de promouvoir le pion`;
+  const sign = mover === 'w' ? 1 : -1;
+  const base = score.type === 'mate' ? (score.value * sign > 0 ? 3000 : -3000) : score.value * sign;
+  const ifPass = threat.score.type === 'mate' ? (threat.score.value > 0 ? 3000 : -3000) : threat.score.value;
+  if (ifPass - base < 40) return null; // l'adversaire n'a pas besoin d'y répondre
+  if (m.captured && exchange(steps, mover).net > 0 && lineDelta(threat.fen, steps, mover, 4) >= 1) return `ça menace de prendre ${the(m.captured, opp(mover))} en ${tok(m.to)}`;
+  if (m.promotion) return 'ça menace de promouvoir le pion';
   return null;
 }
 
@@ -302,7 +317,7 @@ function reasonsFor(ctx) {
   const m = first.m;
   const foe = opp(mover);
   if (m.san.endsWith('#')) return ['c’est mat'];
-  if (mateIn) return [mateIn === 1 ? 'ça donne le mat au coup suivant' : `ça force le mat en ${mateIn} coups`];
+  if (mateIn && mateIn <= 5) return [mateIn === 1 ? 'ça donne le mat au coup suivant' : `ça force le mat en ${mateIn} coups`];
   const out = [];
   const ex = exchange(steps, mover);
   const recapture = m.captured && prev && prev.captured && prev.to === m.to;
@@ -313,7 +328,8 @@ function reasonsFor(ctx) {
   }
   const sign = mover === 'w' ? 1 : -1;
   const cp = score.type === 'mate' ? (score.value * sign > 0 ? 1e5 : -1e5) : score.value * sign;
-  if (ex.net > 0 && listPieces(ex.won) && cp >= ex.net * 50) {
+  const realGain = lineDelta(fenBefore, steps, mover) - (recapture ? V[prev.captured] : 0);
+  if (ex.net > 0 && listPieces(ex.won) && cp >= ex.net * 50 && realGain >= 1) {
     const lost = listPieces(ex.lost);
     out.push(`ça gagne ${listPieces(ex.won)}${lost ? ` contre ${lost}` : ''}`);
   }
@@ -324,17 +340,17 @@ function reasonsFor(ctx) {
     const c0 = new Chess(fenBefore); const c1 = new Chess(first.fen);
     const freed = allPieces(fenBefore).filter((p) => p.color === foe && V[p.type] >= 3 && p.square !== m.to
       && c0.attackers(p.square, foe).includes(m.to) && c1.attackers(p.square, foe).length === 0 && c1.attackers(p.square, mover).length > 0);
-    if (freed.length) out.push(`ça retire le défenseur de ${the(freed[0].type, foe)} en ${tok(freed[0].square)}`);
+    if (freed.length && realGain >= 1) out.push(`ça retire le défenseur de ${the(freed[0].type, foe)} en ${tok(freed[0].square)}`);
   }
 
   const taken = steps[1] && steps[1].m.captured && steps[1].m.to === m.to;
-  const fork = taken ? [] : targets(first.fen, m.to);
+  const fork = taken || realGain < 1 ? [] : targets(first.fen, m.to).filter((t) => t.type !== 'p');
   if (fork.length >= 2) out.push(`ça attaque à la fois ${the(fork[0].type, foe)} en ${tok(fork[0].square)} et ${the(fork[1].type, foe)} en ${tok(fork[1].square)}`);
-  else if (!taken) {
+  else if (!taken && realGain >= 1) {
     const pin = pinBy(first.fen, m.to);
     if (pin) out.push(`ça cloue ${the(pin.pinned.type, foe)} en ${tok(pin.pinned.square)} devant ${the(pin.behind.type, foe)} en ${tok(pin.behind.square)}`);
   }
-  const t = threatFragment(first, threat, mover);
+  const t = threatFragment(first, threat, mover, score);
   if (t) out.push(t);
 
   // Conséquences sur la structure, mesurées à la fin des échanges.
@@ -345,17 +361,10 @@ function reasonsFor(ctx) {
   const kingStill = (s) => allPieces(s).find((p) => p.type === 'k' && p.color === foe).square;
   const pawnTaken = steps.slice(0, 4).some((s) => s.m.color === mover && s.m.captured === 'p');
   if (sh0 != null && sh1 != null && sh1 < sh0 && pawnTaken && kingStill(fenBefore) === kingStill(end)) out.push(`ça affaiblit les pions devant ${the('k', foe)}`);
-  if (foe1.doubled > foe0.doubled) out.push('ça double les pions adverses');
-  else if (foe1.isolated > foe0.isolated) out.push('ça isole un pion adverse');
+  if (m.captured && steps[1] && steps[1].m.piece === 'p' && steps[1].m.to === m.to && foe1.doubled > foe0.doubled) out.push('ça double les pions adverses');
   if (me1.passed > me0.passed) out.push('ça crée un pion passé');
   if (countType(fenBefore, foe, 'b') === 2 && countType(end, foe, 'b') === 1 && countType(end, mover, 'b') === 2) out.push('ça donne la paire de fous');
   if (m.captured && !recapture && materialFor(fenBefore, mover) >= 2 && !ex.net) out.push('avec du matériel en plus, chaque échange rapproche de la victoire');
-
-  // Plan immédiat : ce que la variante fait juste après.
-  const follow = steps[2];
-  if (follow && follow.m.color === mover && follow.m.to !== m.to && !steps[1].m.captured && (follow.m.captured || follow.m.san.includes('+')) && !out.length) {
-    out.push(follow.m.captured ? `ça prépare la prise ${FEM[follow.m.captured] ? 'de la' : 'du'} ${NAME[follow.m.captured]} en ${tok(follow.m.to)}` : `ça prépare un échec en ${tok(follow.m.to)}`);
-  }
 
   if (m.san.startsWith('O-O')) out.push('ça met le roi à l’abri et rapproche la tour du jeu');
   else if (moveNumber <= 12 && 'nb'.includes(m.piece) && m.from[1] === (mover === 'w' ? '1' : '8')) out.push('ça sort une pièce de plus avant de lancer le jeu');
@@ -368,7 +377,6 @@ function reasonsFor(ctx) {
     return !allPieces(first.fen).some((p) => p.type === 'p' && p.color === foe && Math.abs(fileIdx(p.square) - f) <= 1 && (mover === 'w' ? +p.square[1] > r : +p.square[1] < r));
   })()) out.push('ça rapproche un pion passé de la promotion');
 
-  if (!out.length && fork.length === 1) out.push(`ça attaque ${the(fork[0].type, foe)} en ${tok(fork[0].square)}`);
   return [...new Set(out)];
 }
 
@@ -433,7 +441,7 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
   const mateFor = (s) => (s.type === 'mate' && s.value * sign > 0 ? s.value * sign : 0);
   const lead = special ? [special] : [];
 
-  const STRONG = /mat|gagne|à la fois|cloue|défenseur|menace de prendre (le cavalier|le fou|la tour|la dame)|menace un mat/;
+  const STRONG = /\bmat\b|gagne|à la fois|cloue|défenseur|menace de prendre (le cavalier|le fou|la tour|la dame)|menace un mat/;
   const noLine = (t) => t.replace(/ : \[\[.*$/, '.');
 
   if (move.playedBest) {
@@ -448,22 +456,24 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
   }
 
   const neg = negative({ fenBefore, fenAfter, ply, after, mover });
-  const reasons = move.loss >= 5 ? neg.out : neg.out.filter((t) => /piégé|bloqué/.test(t));
+  const reasons = move.loss >= 5 ? neg.out : [];
 
   const bestSteps = walk(fenBefore, before.pv && before.pv.length ? before.pv : [before.best]);
   const playedRecapture = !!(ply.captured && prev && prev.captured && prev.to === ply.to);
   const why = bestSteps.length
     ? reasonsFor({ fenBefore, steps: bestSteps, mover, moveNumber, mateIn: mateFor(before.score), prev, score: before.score, threat: before.threat, playedRecapture })
     : [];
-  // Rien de concret côté meilleur coup : on dit ce que l'adversaire obtient après le coup joué.
-  if (!why.length && neg.r && move.loss >= 5) {
+  // Les principes généraux ne sont pas prouvés par le calcul : jamais présentés comme la raison.
+  const GENERAL = /l’abri|sort une pièce|place au centre|colonne|rapproche un pion|chaque échange/;
+  const proven = why.filter((t) => !GENERAL.test(t));
+  const general = why.filter((t) => GENERAL.test(t));
+  if (!proven.length && neg.r && move.loss >= 5) {
     const r = neg.r;
-    const hit = r.m.captured ? [] : targets(r.fen, r.m.to);
-    const what = r.m.captured ? '' : hit[0] ? `, qui attaque ${the(hit[0].type, hit[0].color)} en ${tok(hit[0].square)}` : '';
-    why.push(`sinon ${side(opp(mover))} jouent ${tok(r.m.san)}${what}`);
+    const hit = r.m.captured ? [] : targets(r.fen, r.m.to).filter((t) => t.type !== 'k' && V[t.type] >= 3);
+    if (r.m.captured || hit[0]) proven.push(`sinon ${side(opp(mover))} jouent ${tok(r.m.san)}${hit[0] ? `, qui attaque ${the(hit[0].type, hit[0].color)} en ${tok(hit[0].square)}` : ''}`);
   }
-  const better = bestSteps.length ? `Mieux valait ${moveAction(bestSteps[0].m)}${why[0] ? `, car ${why[0]}` : ''}.` : '';
-  const extra = why[1] ? `Et ${why[1]}.` : '';
+  const better = bestSteps.length ? `Mieux valait ${moveAction(bestSteps[0].m)}${proven[0] ? `, car ${proven[0]}` : ''}.` : '';
+  const extra = proven[1] ? `Et ${proven[1]}.` : general[0] ? `Idée générale : ${general[0]}.` : '';
 
   return {
     sentences: [...lead, ...reasons, better, extra].filter(Boolean),

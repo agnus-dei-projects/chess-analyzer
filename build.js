@@ -1,7 +1,7 @@
 const fs = require('fs');
 const esbuild = require('esbuild');
 const r = (p) => fs.readFileSync(p);
-const js = esbuild.buildSync({ entryPoints: ['src/main.js'], bundle: true, minify: true, format: 'iife', write: false, target: 'es2020' }).outputFiles[0].text.replace(/<\/script/g, '<\\/script');
+const js = esbuild.buildSync({ entryPoints: ['src/main.js'], bundle: true, minify: true, format: 'iife', write: false, target: 'es2020', define: { __AUDIT__: process.env.AUDIT ? 'true' : 'false' } }).outputFiles[0].text.replace(/<\/script/g, '<\\/script');
 const a = 'node_modules/chessground/assets/';
 const css = r(a + 'chessground.base.css').toString() + r(a + 'chessground.cburnett.css').toString();
 const sf = 'node_modules/stockfish/bin/stockfish-19-lite-single';

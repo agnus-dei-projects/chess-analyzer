@@ -953,5 +953,6 @@ const savedDepth = store.get('depth');
 if (savedDepth && [...$('depth').options].some((o) => o.value === savedDepth)) $('depth').value = savedDepth;
 
 window.__openPgn = openGame;
+if (__AUDIT__) window.__state = state;
 setTab('parties');
 refreshAll();
