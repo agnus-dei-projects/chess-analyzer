@@ -526,6 +526,12 @@ async function analyze(game, key) {
     if (me.cancelled) return;
     await findAlternatives(game, engine, depth, me);
     if (me.cancelled) return;
+    $('progress-text').textContent = 'Recherche des raisons de chaque coup…';
+    for (let i = game.bookPlies; i < game.plies.length; i += 1) {
+      if (game.plies[i].legal < 2) continue;
+      await computeThreat(engine, game.fens[i], state.evals[i]);
+      if (me.cancelled) return;
+    }
     cache.set(cacheKey, state.evals);
     window.__lastAnalysis = { evals: state.evals, ms: performance.now() - t0 };
     setStatus(`Analyse terminée à la profondeur ${depth} en ${Math.round((performance.now() - t0) / 1000)} s.`);
@@ -557,6 +563,21 @@ async function refine(game, engine, depth, me) {
   }
 }
 
+// Que menacerait le meilleur coup si l'adversaire passait son tour ? On rejoue le même camp.
+async function computeThreat(engine, fen, ev) {
+  if (!ev || !ev.best || ev.threat !== undefined) return;
+  ev.threat = null;
+  const c = new Chess(fen);
+  c.move({ from: ev.best.slice(0, 2), to: ev.best.slice(2, 4), promotion: ev.best[4] });
+  if (c.isGameOver() || c.inCheck()) return;
+  const parts = c.fen().split(' ');
+  parts[1] = parts[1] === 'w' ? 'b' : 'w';
+  parts[3] = '-';
+  const flipped = parts.join(' ');
+  const r = await engine.evaluate(flipped, THREAT_DEPTH);
+  ev.threat = { fen: flipped, score: r.score, pv: r.pv };
+}
+
 // Évalue le meilleur coup autre que celui joué : critère des coups brillants et décisifs.
 async function findAlternatives(game, engine, depth, me) {
   const report = buildReport(game.plies, state.evals, game.bookPlies);
@@ -576,6 +597,7 @@ async function findAlternatives(game, engine, depth, me) {
 /* ---------- Reprise : toi plus fort, l'adversaire à son Elo ---------- */
 
 const VARIATION_MAX_PLIES = 300;
+const THREAT_DEPTH = 8;
 let maiaModule = null;
 
 async function loadMaia(v) {
@@ -643,6 +665,7 @@ async function prepareNext(v) {
   const c = replayTo(game, n);
   const ucis = game.plies.map((p) => p.uci);
   const elo = c.turn() === v.me ? v.myElo : v.oppElo;
+  await computeThreat(engine, game.fens[n], state.evals[n]);
   let uci = state.evals[n].best;
   if (elo != null) {
     const mine = c.turn() === v.me;
