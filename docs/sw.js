@@ -1,5 +1,5 @@
 // Garde l'application disponible hors connexion. Les appels à Chess.com ne passent pas par le cache.
-const CACHE = 'chess-analyzer-d88de92dd0';
+const CACHE = 'chess-analyzer-0750eb8ec4';
 const MAIA = 'chess-analyzer-maia-5m-v1'; // conservé d'une version à l'autre : 22 Mo à ne pas retélécharger
 const FILES = ['./', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'];
 

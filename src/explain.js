@@ -342,7 +342,9 @@ function reasonsFor(ctx) {
   const foe0 = pawnStats(fenBefore, foe); const foe1 = pawnStats(end, foe);
   const me0 = pawnStats(fenBefore, mover); const me1 = pawnStats(end, mover);
   const sh0 = kingShield(fenBefore, foe); const sh1 = kingShield(end, foe);
-  if (sh0 != null && sh1 != null && sh1 < sh0) out.push(`ça affaiblit les pions devant ${the('k', foe)}`);
+  const kingStill = (s) => allPieces(s).find((p) => p.type === 'k' && p.color === foe).square;
+  const pawnTaken = steps.slice(0, 4).some((s) => s.m.color === mover && s.m.captured === 'p');
+  if (sh0 != null && sh1 != null && sh1 < sh0 && pawnTaken && kingStill(fenBefore) === kingStill(end)) out.push(`ça affaiblit les pions devant ${the('k', foe)}`);
   if (foe1.doubled > foe0.doubled) out.push('ça double les pions adverses');
   else if (foe1.isolated > foe0.isolated) out.push('ça isole un pion adverse');
   if (me1.passed > me0.passed) out.push('ça crée un pion passé');
