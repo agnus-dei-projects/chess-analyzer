@@ -157,6 +157,41 @@ function pinSentence(pin, intro) {
   return `${intro} cloue ${the(pin.pinned.type, pin.pinned.color)} en ${tok(pin.pinned.square)} devant ${the(pin.behind.type, pin.behind.color)} en ${tok(pin.behind.square)}.`;
 }
 
+const ELLE = (p) => (FEM[p] ? 'elle' : 'il');
+
+// La pièce sur `sq` peut-elle encore aller quelque part sans se perdre ? (trait au camp de la pièce)
+export function trappedAt(fen, sq) {
+  const c = new Chess(fen);
+  const p = c.get(sq);
+  if (!p || !'qrbn'.includes(p.type) || c.inCheck()) return null;
+  const moves = c.moves({ square: sq, verbose: true });
+  const safe = moves.some((d) => {
+    const next = new Chess(d.after);
+    const caps = next.moves({ verbose: true }).filter((x) => x.to === d.to && x.captured);
+    if (!caps.length) return true;
+    const defended = next.attackers(d.to, p.color).length > 0;
+    const cheapest = Math.min(...caps.map((x) => (x.piece === 'k' ? 10 : V[x.piece])));
+    const gain = d.captured ? V[d.captured] : 0;
+    return (defended && cheapest >= V[p.type]) || gain >= V[p.type];
+  });
+  if (safe) return null;
+  const attacked = c.attackers(sq, opp(p.color)).length > 0;
+  if (!attacked && p.type !== 'q') return null;
+  return { piece: p, attacked };
+}
+
+function trapSentence(ply, mover, steps) {
+  // Après la réponse adverse, puis un coup plus loin si la pièce n'a pas bougé.
+  for (const i of [0, 2]) {
+    const s = steps[i];
+    if (!s) break;
+    if (steps.slice(0, i + 1).some((x) => x.m.from === ply.to || x.m.to === ply.to)) break;
+    const t = trappedAt(s.fen, ply.to);
+    if (t) return `${cap(the(t.piece.type, mover))} en ${tok(ply.to)} est ${t.attacked ? 'piégé' : 'bloqué'}${FEM[t.piece.type] ? 'e' : ''} : ${ELLE(t.piece.type)} n’a plus aucune case sûre.`;
+  }
+  return null;
+}
+
 // Pourquoi un coup coûte des chances de gain : on lit la réfutation.
 function negative(ctx) {
   const { fenBefore, fenAfter, ply, after, mover } = ctx;
@@ -170,6 +205,8 @@ function negative(ctx) {
     return { out, r };
   }
   if (!r) return { out, r };
+  const trap = trapSentence(ply, mover, steps);
+  if (trap) out.push(trap);
   const first = walk(fenBefore, [ply.uci])[0];
   const ex = exchange(first ? [first, ...steps] : steps, mover);
   if (ex.net < 0) {
@@ -180,9 +217,9 @@ function negative(ctx) {
     } else if (r.m.captured) {
       out.push(`La réponse ${tok(r.m.san)} prend ${the(r.m.captured, mover)} en ${tok(r.m.to)}.`);
     } else {
-      out.push(`Stockfish prévoit ${lineOf(steps, 4)}.`);
+      if (!trap) out.push(`La suite : ${lineOf(steps, 4)}.`);
     }
-    if (lost) out.push(`Au bout de cette suite, ${side(mover)} perdent ${lost}${won ? ` contre ${won}` : ''}.`);
+    if (lost) out.push(`${Side(mover)} perdent ${lost}${won ? ` contre ${won}` : ''}.`);
     if (r.m.captured && threatExisted(fenBefore, r.m)) out.push('Cette menace existait déjà et le coup joué n’y répond pas.');
     return { out, r };
   }
@@ -191,10 +228,9 @@ function negative(ctx) {
   const pin = pinBy(r.fen, r.m.to);
   if (pin) { out.push(pinSentence(pin, `La réponse ${tok(r.m.san)}`)); return { out, r }; }
   const promo = steps.slice(0, 8).find((s) => s.m.promotion && s.m.color !== mover);
-  if (promo) { out.push(`Stockfish prévoit une promotion adverse : ${lineOf(steps, 5)}.`); return { out, r }; }
+  if (promo) { out.push(`L’adversaire va promouvoir : ${lineOf(steps, 5)}.`); return { out, r }; }
   const checks = steps.slice(0, 6).filter((s) => s.m.color !== mover && s.m.san.includes('+')).length;
   if (checks >= 2) { out.push(`${cap(the('k', mover))} subit une série d’échecs : ${lineOf(steps, 5)}.`); return { out, r }; }
-  out.push(`La suite calculée ne montre pas de perte de matériel immédiate : le recul est positionnel. Après ${tok(r.m.san)}, Stockfish voit ${evalWords(after.score)}.`);
   return { out, r };
 }
 
@@ -223,7 +259,7 @@ function positive(ctx) {
   const cp = score.type === 'mate' ? (score.value * sign > 0 ? 1e5 : -1e5) : score.value * sign;
   if (ex.net > 0 && listPieces(ex.won) && cp >= ex.net * 50) {
     const lost = listPieces(ex.lost);
-    out.push(`Au bout de la suite calculée, ${side(mover)} gagnent ${listPieces(ex.won)}${lost ? ` contre ${lost}` : ''}.`);
+    out.push(`${Side(mover)} gagnent ${listPieces(ex.won)}${lost ? ` contre ${lost}` : ''}.`);
   }
   if (threat && threat.m && threat.played !== m.from + m.to) {
     const replies = steps[1] ? steps[1].m.from + steps[1].m.to : '';
@@ -259,24 +295,21 @@ function positive(ctx) {
   return out.slice(0, 3);
 }
 
-function classSentence(move, mover, ply) {
-  const label = LABELS[move.kind];
-  const lost = pts(move.loss);
-  const camp = mover === 'w' ? 'Blancs' : 'Noirs';
-  const from = Math.round(move.moverBefore);
-  const to = Math.round(move.moverAfter);
+// Phrase propre aux classes dont le badge ne dit pas tout.
+function specialSentence(move, ply) {
   switch (move.kind) {
-    case 'book': return `Théorie : ce coup suit la ligne d’ouverture ${ply.opening ? `${ply.opening} ` : ''}indiquée pour cette partie.`;
-    case 'forced': return 'Coup forcé : c’était le seul coup légal.';
-    case 'brilliant': return `Brillant : c’est un sacrifice de ${NAME[ply.piece]}, et il reste le meilleur coup ou presque.`;
-    case 'great': return `Décisif : c’est le seul bon coup. Tout autre coup ramenait les chances des ${camp} à ${Math.round(move.secondPct)} %.`;
-    case 'best': return 'Meilleur coup : c’est le premier choix de Stockfish.';
-    case 'excellent': return `Excellent : il coûte ${lost} de chances de gain face au meilleur coup.`;
-    case 'good': return `Bon coup : il coûte ${lost} de chances de gain face au meilleur coup.`;
-    case 'miss': return `Occasion manquée : l’adversaire venait de se tromper, mais les chances des ${camp} passent de ${from} à ${to} %.`;
-    default: return `${label} : les chances de gain des ${camp} passent de ${from} à ${to} %, soit ${from - to} points perdus.`;
+    case 'book': return `Coup de théorie${ply.opening ? ` : ${ply.opening}` : ''}.`;
+    case 'forced': return 'Seul coup légal.';
+    case 'brilliant': return `Sacrifice de ${NAME[ply.piece]}, et il tient.`;
+    case 'great': return 'C’était le seul bon coup.';
+    case 'miss': return 'L’adversaire venait de se tromper, et l’occasion passe.';
+    default: return '';
   }
 }
+
+const SPOKEN_LABEL = {
+  best: 'Meilleur coup.', excellent: 'Excellent.', good: 'Bon coup.', inaccuracy: 'Imprécision.', mistake: 'Erreur.', blunder: 'Gaffe.',
+};
 
 // Sacrifice : la pièce arrive sur une case où l'adversaire peut la prendre à perte pour elle.
 export function isSacrifice(m) {
@@ -311,43 +344,52 @@ export function bookFromEcoUrl(url, plies) {
   return { plies: ply, name };
 }
 
-/** Renvoie { sentences: string[], line: string } pour un coup déjà jugé. */
+/**
+ * Renvoie { sentences, spoken, line }.
+ * `spoken` commence par ce qui compte le plus et reste court.
+ */
 export function explainMove({ fenBefore, fenAfter, ply, before, after, move, index, prev }) {
   const mover = ply.color;
   const moveNumber = Math.floor(index / 2) + 1;
-  const sentences = [classSentence(move, mover, ply)];
-  if (move.kind === 'forced' || move.kind === 'book') return { sentences, line: '' };
+  const special = specialSentence(move, ply);
+  if (move.kind === 'forced' || move.kind === 'book') return { sentences: [special], spoken: [special], line: '' };
 
   const sign = mover === 'w' ? 1 : -1;
   const mateFor = (s) => (s.type === 'mate' && s.value * sign > 0 ? s.value * sign : 0);
   const playedSteps = [...walk(fenBefore, [ply.uci]), ...walk(fenAfter, after.pv)];
-
-  const quiet = (steps, score) => (steps.length > 1
-    ? `Pas de gain immédiat. Stockfish prévoit ensuite ${lineOf(steps.slice(1), 2)}, avec ${evalWords(score)}.`
-    : `Pas de gain immédiat. Stockfish voit ${evalWords(score)}.`);
+  const lead = special ? [special] : [];
 
   if (move.playedBest) {
     const pos = positive({ fenBefore, steps: playedSteps, mover, moveNumber, mateIn: mateFor(before.score), prev, score: before.score });
-    sentences.push(...(pos.length ? pos : [quiet(playedSteps, after.score)]));
-    return { sentences, line: lineOf(playedSteps.slice(1), 4) };
+    return {
+      sentences: [...lead, ...pos],
+      spoken: [special || SPOKEN_LABEL[move.kind], ...pos.slice(0, 1)],
+      line: lineOf(playedSteps.slice(1), 4),
+    };
   }
 
+  // Coup imparfait : la cause d'abord, le coup à jouer ensuite.
   let threat = null;
-  if (move.loss >= 5) {
-    const neg = negative({ fenBefore, fenAfter, ply, after, mover });
-    sentences.push(...neg.out);
-    if (neg.r) threat = { m: neg.r.m, played: ply.from + ply.to };
-  } else {
-    const pos = positive({ fenBefore, steps: playedSteps, mover, moveNumber, mateIn: mateFor(after.score), prev, score: after.score });
-    sentences.push(...pos.slice(0, 1));
-  }
+  let reasons = [];
+  const neg = negative({ fenBefore, fenAfter, ply, after, mover });
+  if (neg.r) threat = { m: neg.r.m, played: ply.from + ply.to };
+  if (move.loss >= 5) reasons = neg.out;
+  else reasons = neg.out.filter((t) => /piégé|bloqué/.test(t));
 
   const bestSteps = walk(fenBefore, before.pv && before.pv.length ? before.pv : [before.best]);
-  if (bestSteps.length) {
-    sentences.push(`Le meilleur coup était ${tok(bestSteps[0].m.san)}.`);
-    const why = positive({ fenBefore, steps: bestSteps, mover, moveNumber, mateIn: mateFor(before.score), threat, prev, score: before.score })
-      .filter((t) => !sentences.includes(t));
-    sentences.push(...(why.length ? why : [quiet(bestSteps, before.score)]));
-  }
-  return { sentences, line: lineOf(bestSteps.slice(1), 4) };
+  const better = bestSteps.length ? `Mieux valait ${tok(bestSteps[0].m.san)}.` : '';
+  const why = bestSteps.length
+    ? positive({ fenBefore, steps: bestSteps, mover, moveNumber, mateIn: mateFor(before.score), threat: move.loss >= 5 ? threat : null, prev, score: before.score })
+    : [];
+
+  const praise = move.loss < 5 ? positive({ fenBefore, steps: playedSteps, mover, moveNumber, mateIn: mateFor(after.score), prev, score: after.score }).slice(0, 1) : [];
+  const sentences = [...lead, ...reasons, ...praise, better, ...why].filter(Boolean);
+
+  const opening = reasons.length ? reasons.slice(0, 2) : [special || SPOKEN_LABEL[move.kind]];
+  const prefix = reasons.length && special ? [special] : [];
+  return {
+    sentences,
+    spoken: [...opening, ...prefix, better, ...why.slice(0, 1)].filter(Boolean),
+    line: lineOf(bestSteps.slice(1), 4),
+  };
 }

@@ -99,8 +99,10 @@ details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
 details[open] summary { margin-bottom: 8px; }
 
 .stage { display: flex; gap: 8px; width: min(100%, calc(100vh - 150px)); min-width: 280px; margin: 0 auto; max-width: 100%; }
-#bar { position: relative; flex: none; width: 20px; background: var(--bar-black); border-radius: 3px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+#bar { position: relative; flex: none; width: 30px; background: var(--bar-black); border-radius: 3px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
 #bar.flip { justify-content: flex-start; }
+#bar-delta { position: absolute; left: 0; right: 0; bottom: clamp(9px, var(--w, 50%), calc(100% - 9px)); transform: translateY(50%); text-align: center; background: var(--kc); color: var(--on-mark); font: 700 11px/18px var(--mono); letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+#bar.flip #bar-delta { bottom: auto; top: clamp(9px, var(--w, 50%), calc(100% - 9px)); transform: translateY(-50%); }
 #bar-white { background: var(--bar-white); height: var(--w, 50%); transition: height .2s ease, width .2s ease; }
 .board-wrap { flex: 1; min-width: 0; }
 #board { width: 100%; aspect-ratio: 1; }
@@ -202,11 +204,8 @@ td:last-child { text-align: right; }
 
   body[data-tab=analyse] .app { overflow: hidden; }
   #m-players { order: 1; display: flex; }
-  .stage { order: 2; flex: none; flex-direction: column; gap: 4px; min-width: 0; width: min(100%, calc(100dvh - 340px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))); min-width: 220px; margin: 0 auto; }
-  .board-wrap { flex: none; width: 100%; }
-  #bar { width: 100%; height: 7px; flex-direction: row; justify-content: flex-start; }
-  #bar.flip { flex-direction: row-reverse; justify-content: flex-start; }
-  #bar-white { height: 100%; width: var(--w, 50%); }
+  .stage { order: 2; flex: none; gap: 4px; min-width: 0; width: min(100%, calc(100dvh - 306px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))); margin: 0 auto; }
+  .board-wrap { flex: 1; min-width: 0; }
   #progress { order: 3; padding: 6px 10px; }
   #example { order: 3; padding: 5px 8px; font-size: 12px; }
   #status { order: 3; font-size: 12px; }
@@ -267,6 +266,17 @@ td:last-child { text-align: right; }
       <p id="list-msg">Tes parties terminées apparaîtront ici, de la plus récente à la plus ancienne.</p>
       <div id="games"></div>
     </div>
+    <div class="panel stack" data-v="parties">
+      <span class="cap">Voix</span>
+      <p id="voice-empty" class="v-text" hidden>Aucune voix française sur cet appareil.</p>
+      <div class="stack" id="voice-settings" hidden>
+        <div class="field"><label for="voice-name">Voix de l’appareil</label><select id="voice-name"></select></div>
+        <div class="inline">
+          <div class="field" style="flex:1"><label for="voice-rate">Vitesse</label><select id="voice-rate"><option value="1">Normale</option><option value="1.25">Rapide</option><option value="1.5">Très rapide</option></select></div>
+          <div class="field" style="flex:1"><label for="voice-pitch">Timbre</label><select id="voice-pitch"><option value="1">Naturel</option><option value="0.7">Grave</option><option value="1.2">Aigu</option></select></div>
+        </div>
+      </div>
+    </div>
     <details class="panel" data-v="parties">
       <summary>Coller un PGN</summary>
       <form class="stack" id="pgn-form">
@@ -280,7 +290,7 @@ td:last-child { text-align: right; }
   <section class="col" aria-label="Échiquier">
     <div id="m-players" data-v="analyse"><span id="m-white"></span><span id="m-black"></span></div>
     <div class="stage" data-v="analyse">
-      <div id="bar" aria-hidden="true"><div id="bar-white"></div></div>
+      <div id="bar" aria-hidden="true"><div id="bar-white"></div><span id="bar-delta" hidden></span></div>
       <div class="board-wrap"><div id="board"></div><div id="badge" hidden></div></div>
     </div>
     <div class="controls" data-v="analyse">

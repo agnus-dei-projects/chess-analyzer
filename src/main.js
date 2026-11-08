@@ -166,6 +166,13 @@ function renderBoard() {
   $('bar').style.setProperty('--w', `${w}%`);
   $('bar').classList.toggle('flip', orientation() === 'black');
   $('bar-value').textContent = ev ? formatScore(ev.score) : '…';
+  const delta = $('bar-delta');
+  if (judged && !judged.pending) {
+    const d = Math.round(judged.moverAfter - judged.moverBefore);
+    delta.hidden = false;
+    delta.dataset.kind = judged.kind;
+    delta.textContent = d > 0 ? `+${d}` : d < 0 ? `−${-d}` : '0';
+  } else delta.hidden = true;
   renderBadge(ply, judged);
   renderVerdict();
 }
@@ -194,7 +201,7 @@ function explanation(i) {
     });
   } catch (err) {
     console.warn(err);
-    return { sentences: [`${LABELS[move.kind]}.`], line: '' };
+    return { sentences: [`${LABELS[move.kind]}.`], spoken: [`${LABELS[move.kind]}.`], line: '' };
   }
 }
 
@@ -223,11 +230,7 @@ function renderVerdict() {
     h('p', { class: 'v-title' }, title, h('span', { class: 'v-kind' }, LABELS[m.kind])),
     voice.available ? h('button', { type: 'button', class: 'ghost listen', onclick: () => speakCurrent() }, 'Écouter') : null));
   const body = h('div', { class: 'v-body' });
-  ex.sentences.forEach((t, i) => {
-    // Le libellé est déjà affiché en tête : on ne le répète qu'à la voix.
-    const text = i === 0 ? t.replace(/^[^:]+ : /, '') : t;
-    body.append(h('p', { class: 'v-text' }, display(text[0].toUpperCase() + text.slice(1))));
-  });
+  ex.sentences.forEach((t) => body.append(h('p', { class: 'v-text' }, display(t))));
   if (ex.line) body.append(h('p', { class: 'v-line' }, 'Suite prévue : ', display(ex.line)));
   box.append(body);
 }
@@ -369,10 +372,17 @@ const voice = {
   primed: false,
   run: 0,
   get available() { return !!this.synth; },
+  rate: +(store.get('voice-rate') || 1.25),
+  pitch: +(store.get('voice-pitch') || 1),
+  list: [],
   pick() {
     if (!this.synth) return;
-    const fr = this.synth.getVoices().filter((v) => v.lang.toLowerCase().startsWith('fr'));
-    this.chosen = fr.find((v) => v.lang.toLowerCase() === 'fr-fr' && v.default) || fr.find((v) => v.lang.toLowerCase() === 'fr-fr') || fr[0] || null;
+    const lang = (v) => v.lang.toLowerCase().replace('_', '-');
+    this.list = this.synth.getVoices().filter((v) => lang(v).startsWith('fr'));
+    const saved = store.get('voice-uri');
+    this.chosen = this.list.find((v) => v.voiceURI === saved)
+      || this.list.find((v) => lang(v) === 'fr-fr' && v.default) || this.list.find((v) => lang(v) === 'fr-fr') || this.list[0] || null;
+    renderVoiceList();
   },
   // Safari exige un premier appel pendant un geste de l'utilisateur.
   prime() {
@@ -394,7 +404,7 @@ const voice = {
       const u = new SpeechSynthesisUtterance(sentences[i]);
       u.lang = 'fr-FR';
       if (this.chosen) u.voice = this.chosen;
-      u.rate = 1; u.pitch = 1;
+      u.rate = this.rate; u.pitch = this.pitch;
       u.onend = () => nextUp(i + 1);
       this.synth.speak(u);
     };
@@ -406,8 +416,19 @@ function speakCurrent() {
   if (state.cursor === 0) { voice.stop(); return; }
   const ex = explanation(state.cursor - 1);
   if (!ex) { voice.stop(); return; }
-  const title = sanToSpeech(state.game.plies[state.cursor - 1].san);
-  voice.say([`${title}.`, ...ex.sentences.map(spoken)]);
+  voice.say(ex.spoken.map(spoken));
+}
+
+const REGION = { 'fr-fr': 'France', 'fr-ca': 'Québec', 'fr-be': 'Belgique', 'fr-ch': 'Suisse' };
+
+function renderVoiceList() {
+  const sel = $('voice-name');
+  sel.replaceChildren(...voice.list.map((v) => {
+    const region = REGION[v.lang.toLowerCase().replace('_', '-')] || v.lang;
+    return h('option', { value: v.voiceURI, selected: voice.chosen === v ? 'selected' : null }, `${v.name} · ${region}`);
+  }));
+  $('voice-settings').hidden = !voice.list.length;
+  $('voice-empty').hidden = !!voice.list.length;
 }
 
 function renderVoiceToggle() {
@@ -673,6 +694,15 @@ if (voice.synth) {
   voice.synth.addEventListener?.('voiceschanged', () => voice.pick());
 }
 renderVoiceToggle();
+$('voice-rate').value = String(voice.rate);
+$('voice-pitch').value = String(voice.pitch);
+$('voice-name').addEventListener('change', (e) => {
+  store.set('voice-uri', e.target.value);
+  voice.pick();
+  voice.say(['Voici ma voix.']);
+});
+$('voice-rate').addEventListener('change', (e) => { voice.rate = +e.target.value; store.set('voice-rate', e.target.value); voice.say(['Voici ma vitesse.']); });
+$('voice-pitch').addEventListener('change', (e) => { voice.pitch = +e.target.value; store.set('voice-pitch', e.target.value); voice.say(['Voici mon timbre.']); });
 
 function setTab(name) {
   document.body.dataset.tab = name;
