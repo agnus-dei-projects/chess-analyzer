@@ -79,9 +79,9 @@ class Engine {
     await this.send('isready', 'readyok');
   }
 
-  async evaluate(fen, depth, only) {
+  async evaluate(fen, depth, only, moves) {
     this.last = null;
-    await this.send(`position fen ${fen}`);
+    await this.send(`position fen ${fen}${moves && moves.length ? ` moves ${moves.join(' ')}` : ''}`);
     const line = await this.send(`go depth ${depth}${only ? ` searchmoves ${only.join(' ')}` : ''}`, 'bestmove');
     const l = this.last || { type: 'cp', value: 0, pv: [] };
     return { score: { type: l.type, value: l.value }, pv: l.pv, best: line.split(' ')[1] };
@@ -150,7 +150,7 @@ function renderBoard() {
   const { game, cursor, report } = state;
   if (!game) return;
   const ply = cursor > 0 ? game.plies[cursor - 1] : null;
-  const judged = ply && report ? report.moves[cursor - 1] : null;
+  const judged = ply && report && !inVariation(cursor - 1) ? report.moves[cursor - 1] : null;
   cg.set({
     fen: game.fens[cursor],
     orientation: orientation(),
@@ -175,7 +175,10 @@ function renderBoard() {
   } else delta.hidden = true;
   renderBadge(ply, judged);
   renderVerdict();
+  renderGuide();
 }
+
+const inVariation = (i) => !!state.variation && i >= state.variation.base;
 
 function renderBadge(ply, judged) {
   const b = $('badge');
@@ -219,6 +222,13 @@ function renderVerdict() {
   }
   const m = report ? report.moves[cursor - 1] : null;
   const title = moveLabel(cursor - 1, game.plies[cursor - 1].san);
+  if (inVariation(cursor - 1)) {
+    box.append(h('p', { class: 'v-title' }, title, h('span', { class: 'v-kind' }, 'Coup de l’ordi')));
+    const ex2 = m && !m.pending ? explanation(cursor - 1) : null;
+    if (ex2) ex2.sentences.forEach((t) => box.append(h('p', { class: 'v-text' }, display(t))));
+    if (cursor === game.plies.length && state.variation.ended) box.append(h('p', { class: 'v-text' }, h('strong', {}, state.variation.ended)));
+    return;
+  }
   if (!m || m.pending) {
     box.append(h('p', { class: 'v-title' }, title), h('p', { class: 'v-text' }, job ? 'Analyse en cours…' : 'Ce coup n’a pas été analysé.'));
     return;
@@ -228,7 +238,7 @@ function renderVerdict() {
   box.append(h('div', { class: 'v-head' },
     h('span', { class: 'mark', 'data-kind': m.kind, 'aria-hidden': 'true' }, GLYPHS[m.kind]),
     h('p', { class: 'v-title' }, title, h('span', { class: 'v-kind' }, LABELS[m.kind])),
-    voice.available ? h('button', { type: 'button', class: 'ghost listen', onclick: () => speakCurrent() }, 'Écouter') : null));
+    voice.available && ex.spoken.length ? h('button', { type: 'button', class: 'ghost listen', onclick: () => speakCurrent() }, 'Écouter') : null));
   const body = h('div', { class: 'v-body' });
   ex.sentences.forEach((t) => body.append(h('p', { class: 'v-text' }, display(t))));
   if (ex.line) body.append(h('p', { class: 'v-line' }, 'Suite prévue : ', display(ex.line)));
@@ -247,12 +257,12 @@ function renderMoves() {
     if (i % 2 === 0) list.append(h('span', { class: 'num' }, `${moveNo(i)}.`));
     else if (i === 0) list.append(h('span', { class: 'num' }, '1.'), h('span', {}));
     const m = report ? report.moves[i] : null;
-    const kind = m && !m.pending ? m.kind : '';
+    const kind = m && !m.pending && !inVariation(i) ? m.kind : '';
     strip.append(h('button', {
-      type: 'button', class: `chip${cursor === i + 1 ? ' on' : ''}`, onclick: () => go(i + 1, true),
+      type: 'button', class: `chip${cursor === i + 1 ? ' on' : ''}${inVariation(i) ? ' var' : ''}`, onclick: () => go(i + 1, true),
     }, i % 2 === 0 ? h('span', { class: 'num' }, `${moveNo(i)}.`) : null, fig(p.san), kind ? h('span', { class: 'mark tiny', 'data-kind': kind }, GLYPHS[kind]) : null));
     list.append(h('button', {
-      type: 'button', class: `mv${cursor === i + 1 ? ' on' : ''}`, 'data-kind': kind || null, onclick: () => go(i + 1, true),
+      type: 'button', class: `mv${cursor === i + 1 ? ' on' : ''}${inVariation(i) ? ' var' : ''}`, 'data-kind': kind || null, onclick: () => go(i + 1, true),
       'aria-label': `${moveLabel(i, p.san)}${kind ? ` : ${LABELS[kind]}` : ''}`,
     }, fig(p.san), kind ? h('span', { class: 'mark tiny', 'data-kind': kind, 'aria-hidden': 'true' }, GLYPHS[kind]) : null));
   });
@@ -277,7 +287,7 @@ function renderStats() {
   $('m-white').textContent = $('p-white').textContent;
   $('m-black').textContent = $('p-black').textContent;
   $('p-result').textContent = game.result.replace('1/2-1/2', '½–½').replace('-', '–');
-  const { white: w, black: b } = report;
+  const { white: w, black: b } = state.variation ? state.variation.mainReport : report;
   const acc = (s) => (s.accuracy == null ? '–' : `${s.accuracy.toFixed(1)} %`);
   body.append(h('tr', {}, h('td', {}, acc(w)), h('th', { scope: 'row' }, 'Précision'), h('td', {}, acc(b))));
   KINDS.forEach((k) => body.append(h('tr', {},
@@ -329,7 +339,7 @@ function renderChart() {
   if (report) {
     const R = { inaccuracy: 4, mistake: 4.5, miss: 4.5, blunder: 5.5 };
     report.moves.forEach((m, i) => {
-      if (m.pending || !R[m.kind] || !evals[i + 1]) return;
+      if (m.pending || !R[m.kind] || !evals[i + 1] || inVariation(i)) return;
       svg.append(s('circle', { cx: x(i + 1), cy: y(winPct(scoreToCp(evals[i + 1].score))), r: R[m.kind], class: `c-pt ${m.kind}` }));
     });
   }
@@ -359,7 +369,7 @@ function go(i, fromUser) {
   renderMoves();
   renderChart();
   if (fromUser && moved) {
-    if (voice.auto) speakCurrent(); else voice.stop();
+    if (voice.auto && !inVariation(state.cursor - 1)) speakCurrent(); else voice.stop();
   }
 }
 
@@ -414,7 +424,7 @@ const voice = {
 
 function speakCurrent() {
   if (state.cursor === 0) { voice.stop(); return; }
-  const ex = explanation(state.cursor - 1);
+  const ex = inVariation(state.cursor - 1) ? null : explanation(state.cursor - 1);
   if (!ex) { voice.stop(); return; }
   voice.say(ex.spoken.map(spoken));
 }
@@ -553,6 +563,116 @@ async function findAlternatives(game, engine, depth, me) {
   }
 }
 
+/* ---------- L'ordi continue la partie ---------- */
+
+const VARIATION_MAX_PLIES = 300;
+const VARIATION_PACE = 650;
+const pause = (ms) => new Promise((r) => { setTimeout(r, ms); });
+
+function endText(c) {
+  if (c.isCheckmate()) return `Mat : les ${c.turn() === 'w' ? 'Noirs' : 'Blancs'} gagnent.`;
+  if (c.isStalemate()) return 'Pat : partie nulle.';
+  if (c.isInsufficientMaterial()) return 'Partie nulle : matériel insuffisant.';
+  if (c.isThreefoldRepetition()) return 'Partie nulle par répétition.';
+  if (c.isDraw()) return 'Partie nulle : règle des 50 coups.';
+  return null;
+}
+
+function replayTo(game, n) {
+  const c = new Chess(game.fens[0]);
+  game.plies.slice(0, n).forEach((p) => c.move({ from: p.from, to: p.to, promotion: p.uci[4] }));
+  return c;
+}
+
+function startVariation() {
+  if (job || state.variation || !state.game) return;
+  const base = state.cursor;
+  const ev = state.evals[base];
+  if (!ev || !ev.best) return;
+  voice.stop();
+  const main = { game: state.game, evals: state.evals, cursor: base };
+  const v = {
+    base, main, chess: replayTo(main.game, base), engine: new Engine(), active: true, paused: false, fast: false, ended: null,
+    mainReport: buildReport(main.game.plies, main.evals, main.game.bookPlies),
+  };
+  state.variation = v;
+  state.game = {
+    ...main.game, fens: main.game.fens.slice(0, base + 1), plies: main.game.plies.slice(0, base), bookPlies: Math.min(main.game.bookPlies, base),
+  };
+  state.evals = main.evals.slice(0, base + 1);
+  refreshAll();
+  runVariation(v);
+}
+
+async function runVariation(v) {
+  const { engine, chess } = v;
+  const depth = +$('depth').value;
+  try {
+    await engine.init();
+    while (v.active) {
+      if (v.paused) { await pause(150); continue; }
+      const game = state.game;
+      const last = state.evals[state.evals.length - 1];
+      const t0 = performance.now();
+      const prev = game.plies[game.plies.length - 1];
+      const legal = chess.moves().length;
+      const m = chess.move(parseUciMove(last.best));
+      const captured = m.captured;
+      game.plies.push({
+        san: m.san, color: m.color, from: m.from, to: m.to, uci: m.from + m.to + (m.promotion || ''), legal, captured, piece: m.piece, sacrifice: false,
+        recapture: !!(captured && prev && prev.captured && prev.to === m.to), opening: '',
+      });
+      game.fens.push(chess.fen());
+      const ended = endText(chess);
+      if (ended) {
+        state.evals.push({ score: chess.isCheckmate() ? { type: 'mate', value: 0, mated: chess.turn() === 'w' ? 'white' : 'black' } : { type: 'cp', value: 0 }, best: null });
+        v.ended = ended;
+      } else if (game.plies.length - v.base >= VARIATION_MAX_PLIES) {
+        v.ended = `Arrêt après ${VARIATION_MAX_PLIES} coups joués par l’ordi.`;
+      } else {
+        const r = await engine.evaluate(game.fens[0], depth, null, game.plies.map((p) => p.uci));
+        if (!v.active) return;
+        state.evals.push({ score: toWhiteScore(r.score, chess.turn() === 'w'), best: r.best, pv: r.pv });
+      }
+      if (!v.ended && !v.fast) await pause(Math.max(0, VARIATION_PACE - (performance.now() - t0)));
+      if (!v.active) return;
+      if (!v.paused) state.cursor = game.plies.length;
+      refreshAll();
+      if (v.ended) { v.engine.stop(); return; }
+    }
+  } catch (err) {
+    if (v.active) { v.ended = 'Le moteur s’est arrêté. Reviens à la partie, puis réessaie.'; refreshAll(); }
+  }
+}
+
+function parseUciMove(u) { return { from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] }; }
+
+function exitVariation() {
+  const v = state.variation;
+  if (!v) return;
+  v.active = false;
+  v.engine.stop();
+  state.variation = null;
+  state.game = v.main.game;
+  state.evals = v.main.evals;
+  state.cursor = v.main.cursor;
+  refreshAll();
+}
+
+function renderGuide() {
+  const v = state.variation;
+  $('guide-start').hidden = !!v;
+  $('guide-run').hidden = !v;
+  if (!v) {
+    const ev = state.evals[state.cursor];
+    $('guide-start').disabled = !!job || !ev || !ev.best;
+    return;
+  }
+  $('guide-text').textContent = v.ended || `L’ordi joue depuis ${v.base === 0 ? 'le début' : moveLabel(v.base - 1, v.main.game.plies[v.base - 1].san)}`;
+  $('guide-pause').hidden = !!v.ended;
+  $('guide-pause').textContent = v.paused ? 'Reprendre' : 'Pause';
+}
+
 function openGame(pgn, key, { run = true, url = null } = {}) {
   let game;
   try { game = parseGame(pgn); } catch {
@@ -564,6 +684,7 @@ function openGame(pgn, key, { run = true, url = null } = {}) {
     return;
   }
   stopJob();
+  exitVariation();
   state.game = game;
   state.evals = [];
   state.cursor = 0;
@@ -674,14 +795,31 @@ $('pgn-form').addEventListener('submit', (e) => {
 });
 $('depth').addEventListener('change', () => {
   if (!state.game) return;
+  exitVariation();
   store.set('depth', $('depth').value);
   analyze(state.game, state.key);
 });
 $('cancel').addEventListener('click', () => { stopJob(); setStatus('Analyse arrêtée. Les coups déjà calculés restent affichés.'); refreshAll(); });
 $('first').addEventListener('click', () => go(0, true));
-$('prev').addEventListener('click', () => go(state.cursor - 1, true));
+$('prev').addEventListener('click', () => {
+  if (state.variation && !state.variation.ended) state.variation.paused = true;
+  go(state.cursor - 1, true);
+});
 $('next').addEventListener('click', () => go(state.cursor + 1, true));
-$('last').addEventListener('click', () => go(1e4, true));
+$('last').addEventListener('click', () => {
+  if (state.variation && !state.variation.ended) { state.variation.fast = true; state.variation.paused = false; renderGuide(); }
+  go(1e4, true);
+});
+$('guide-start').addEventListener('click', startVariation);
+$('guide-pause').addEventListener('click', () => {
+  const v = state.variation;
+  if (!v) return;
+  v.paused = !v.paused;
+  v.fast = false;
+  if (!v.paused) go(1e4);
+  renderGuide();
+});
+$('guide-exit').addEventListener('click', exitVariation);
 $('voice').addEventListener('click', () => {
   voice.auto = !voice.auto;
   store.set('voice', voice.auto ? 'on' : 'off');

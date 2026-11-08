@@ -307,10 +307,6 @@ function specialSentence(move, ply) {
   }
 }
 
-const SPOKEN_LABEL = {
-  best: 'Meilleur coup.', excellent: 'Excellent.', good: 'Bon coup.', inaccuracy: 'Imprécision.', mistake: 'Erreur.', blunder: 'Gaffe.',
-};
-
 // Sacrifice : la pièce arrive sur une case où l'adversaire peut la prendre à perte pour elle.
 export function isSacrifice(m) {
   if (!'nbrq'.includes(m.piece)) return false;
@@ -352,7 +348,7 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
   const mover = ply.color;
   const moveNumber = Math.floor(index / 2) + 1;
   const special = specialSentence(move, ply);
-  if (move.kind === 'forced' || move.kind === 'book') return { sentences: [special], spoken: [special], line: '' };
+  if (move.kind === 'forced' || move.kind === 'book') return { sentences: [special], spoken: [], line: '' };
 
   const sign = mover === 'w' ? 1 : -1;
   const mateFor = (s) => (s.type === 'mate' && s.value * sign > 0 ? s.value * sign : 0);
@@ -363,7 +359,7 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
     const pos = positive({ fenBefore, steps: playedSteps, mover, moveNumber, mateIn: mateFor(before.score), prev, score: before.score });
     return {
       sentences: [...lead, ...pos],
-      spoken: [special || SPOKEN_LABEL[move.kind], ...pos.slice(0, 1)],
+      spoken: [special, ...pos.slice(0, 1)].filter(Boolean),
       line: lineOf(playedSteps.slice(1), 4),
     };
   }
@@ -385,7 +381,7 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
   const praise = move.loss < 5 ? positive({ fenBefore, steps: playedSteps, mover, moveNumber, mateIn: mateFor(after.score), prev, score: after.score }).slice(0, 1) : [];
   const sentences = [...lead, ...reasons, ...praise, better, ...why].filter(Boolean);
 
-  const opening = reasons.length ? reasons.slice(0, 2) : [special || SPOKEN_LABEL[move.kind]];
+  const opening = reasons.length ? reasons.slice(0, 2) : [special];
   const prefix = reasons.length && special ? [special] : [];
   return {
     sentences,
