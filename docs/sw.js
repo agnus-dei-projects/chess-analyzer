@@ -1,5 +1,5 @@
 // Garde l'application disponible hors connexion. Les appels à Chess.com ne passent pas par le cache.
-const CACHE = 'chess-analyzer-80693ddb7b';
+const CACHE = 'chess-analyzer-81fec647ab';
 const FILES = ['./', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'];
 
 self.addEventListener('install', (e) => {

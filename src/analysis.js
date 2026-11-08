@@ -140,7 +140,25 @@ export function parseInfo(line) {
   const m = line.match(/ score (cp|mate) (-?\d+)/);
   if (!m) return null;
   const pv = line.match(/ pv (.+)$/);
-  return { type: m[1], value: parseInt(m[2], 10), pv: pv ? pv[1].trim().split(/\s+/) : [] };
+  const mp = line.match(/ multipv (\d+)/);
+  return { type: m[1], value: parseInt(m[2], 10), multipv: mp ? +mp[1] : 1, pv: pv ? pv[1].trim().split(/\s+/) : [] };
+}
+
+// Choix d'un coup « humain » à un Elo donné, parmi les meilleurs coups calculés.
+// Plus l'Elo baisse, plus les coups moins bons deviennent probables. Réglage propre à cette app.
+export const humanTemperature = (elo) => 12 * 2 ** (-(elo - 800) / 500);
+
+export function pickHuman(candidates, elo, rnd = Math.random) {
+  const scored = candidates.map((c) => ({ ...c, w: winPct(c.cp) }));
+  const top = Math.max(...scored.map((c) => c.w));
+  const tau = humanTemperature(elo);
+  const weights = scored.map((c) => Math.exp(-(top - c.w) / tau));
+  let x = rnd() * weights.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < scored.length; i += 1) {
+    x -= weights[i];
+    if (x <= 0) return scored[i].uci;
+  }
+  return scored[0].uci;
 }
 
 export const FAIR_RESULTS = ['1-0', '0-1', '1/2-1/2'];

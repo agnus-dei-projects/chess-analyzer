@@ -1,7 +1,7 @@
 import { Chess } from 'chess.js';
 import { Chessground } from 'chessground';
 import {
-  buildReport, formatScore, GLYPHS, KINDS, LABELS, parseInfo, scoreToCp, toWhiteScore, winPct, FAIR_RESULTS,
+  buildReport, formatScore, GLYPHS, KINDS, LABELS, MATE_CP, parseInfo, pickHuman, scoreToCp, toWhiteScore, winPct, FAIR_RESULTS,
 } from './analysis.js';
 import { bookFromEcoUrl, explainMove, isSacrifice, sanToSpeech } from './explain.js';
 import sample from './sample.json';
@@ -57,6 +57,7 @@ class Engine {
   onLine(line) {
     const info = parseInfo(line);
     if (info) this.last = info.pv.length || !this.last ? info : { ...info, pv: this.last.pv };
+    if (info && this.multi && info.pv.length) this.multi.set(info.multipv, info);
     if (this.waiting && this.waiting.test(line)) {
       const { resolve } = this.waiting;
       this.waiting = null;
@@ -85,6 +86,18 @@ class Engine {
     const line = await this.send(`go depth ${depth}${only ? ` searchmoves ${only.join(' ')}` : ''}`, 'bestmove');
     const l = this.last || { type: 'cp', value: 0, pv: [] };
     return { score: { type: l.type, value: l.value }, pv: l.pv, best: line.split(' ')[1] };
+  }
+
+  // Les meilleurs coups de la position, du point de vue du camp au trait.
+  async candidates(fen, moves, depth, count) {
+    await this.send(`setoption name MultiPV value ${count}`);
+    this.multi = new Map();
+    await this.send(`position fen ${fen}${moves.length ? ` moves ${moves.join(' ')}` : ''}`);
+    await this.send(`go depth ${depth}`, 'bestmove');
+    const found = [...this.multi.values()];
+    this.multi = null;
+    await this.send('setoption name MultiPV value 1');
+    return found.map((i) => ({ uci: i.pv[0], cp: i.type === 'cp' ? i.value : (i.value > 0 ? MATE_CP : -MATE_CP) }));
   }
 
   stop() { this.worker.terminate(); }
@@ -150,7 +163,7 @@ function renderBoard() {
   const { game, cursor, report } = state;
   if (!game) return;
   const ply = cursor > 0 ? game.plies[cursor - 1] : null;
-  const judged = ply && report && !inVariation(cursor - 1) ? report.moves[cursor - 1] : null;
+  const judged = ply && report ? report.moves[cursor - 1] : null;
   cg.set({
     fen: game.fens[cursor],
     orientation: orientation(),
@@ -222,13 +235,6 @@ function renderVerdict() {
   }
   const m = report ? report.moves[cursor - 1] : null;
   const title = moveLabel(cursor - 1, game.plies[cursor - 1].san);
-  if (inVariation(cursor - 1)) {
-    box.append(h('p', { class: 'v-title' }, title, h('span', { class: 'v-kind' }, 'Coup de l’ordi')));
-    const ex2 = m && !m.pending ? explanation(cursor - 1) : null;
-    if (ex2) ex2.sentences.forEach((t) => box.append(h('p', { class: 'v-text' }, display(t))));
-    if (cursor === game.plies.length && state.variation.ended) box.append(h('p', { class: 'v-text' }, h('strong', {}, state.variation.ended)));
-    return;
-  }
   if (!m || m.pending) {
     box.append(h('p', { class: 'v-title' }, title), h('p', { class: 'v-text' }, job ? 'Analyse en cours…' : 'Ce coup n’a pas été analysé.'));
     return;
@@ -242,6 +248,7 @@ function renderVerdict() {
   const body = h('div', { class: 'v-body' });
   ex.sentences.forEach((t) => body.append(h('p', { class: 'v-text' }, display(t))));
   if (ex.line) body.append(h('p', { class: 'v-line' }, 'Suite prévue : ', display(ex.line)));
+  if (state.variation && state.variation.ended && cursor === game.plies.length) body.append(h('p', { class: 'v-text' }, h('strong', {}, state.variation.ended)));
   box.append(body);
 }
 
@@ -257,7 +264,7 @@ function renderMoves() {
     if (i % 2 === 0) list.append(h('span', { class: 'num' }, `${moveNo(i)}.`));
     else if (i === 0) list.append(h('span', { class: 'num' }, '1.'), h('span', {}));
     const m = report ? report.moves[i] : null;
-    const kind = m && !m.pending && !inVariation(i) ? m.kind : '';
+    const kind = m && !m.pending ? m.kind : '';
     strip.append(h('button', {
       type: 'button', class: `chip${cursor === i + 1 ? ' on' : ''}${inVariation(i) ? ' var' : ''}`, onclick: () => go(i + 1, true),
     }, i % 2 === 0 ? h('span', { class: 'num' }, `${moveNo(i)}.`) : null, fig(p.san), kind ? h('span', { class: 'mark tiny', 'data-kind': kind }, GLYPHS[kind]) : null));
@@ -339,7 +346,7 @@ function renderChart() {
   if (report) {
     const R = { inaccuracy: 4, mistake: 4.5, miss: 4.5, blunder: 5.5 };
     report.moves.forEach((m, i) => {
-      if (m.pending || !R[m.kind] || !evals[i + 1] || inVariation(i)) return;
+      if (m.pending || !R[m.kind] || !evals[i + 1]) return;
       svg.append(s('circle', { cx: x(i + 1), cy: y(winPct(scoreToCp(evals[i + 1].score))), r: R[m.kind], class: `c-pt ${m.kind}` }));
     });
   }
@@ -369,7 +376,7 @@ function go(i, fromUser) {
   renderMoves();
   renderChart();
   if (fromUser && moved) {
-    if (voice.auto && !inVariation(state.cursor - 1)) speakCurrent(); else voice.stop();
+    if (voice.auto) speakCurrent(); else voice.stop();
   }
 }
 
@@ -424,7 +431,7 @@ const voice = {
 
 function speakCurrent() {
   if (state.cursor === 0) { voice.stop(); return; }
-  const ex = inVariation(state.cursor - 1) ? null : explanation(state.cursor - 1);
+  const ex = explanation(state.cursor - 1);
   if (!ex) { voice.stop(); return; }
   voice.say(ex.spoken.map(spoken));
 }
@@ -563,11 +570,12 @@ async function findAlternatives(game, engine, depth, me) {
   }
 }
 
-/* ---------- L'ordi continue la partie ---------- */
+/* ---------- Reprise : toi plus fort, l'adversaire à son Elo ---------- */
 
 const VARIATION_MAX_PLIES = 300;
-const VARIATION_PACE = 650;
-const pause = (ms) => new Promise((r) => { setTimeout(r, ms); });
+const CANDIDATE_DEPTH = 10;
+const CANDIDATE_COUNT = 8;
+const DEFAULT_ELO = 1500;
 
 function endText(c) {
   if (c.isCheckmate()) return `Mat : les ${c.turn() === 'w' ? 'Noirs' : 'Blancs'} gagnent.`;
@@ -591,61 +599,88 @@ function startVariation() {
   if (!ev || !ev.best) return;
   voice.stop();
   const main = { game: state.game, evals: state.evals, cursor: base };
+  const g = main.game;
+  const u = state.username.toLowerCase();
+  const turn = g.fens[base].split(' ')[1];
+  const me = u && g.white.toLowerCase() === u ? 'w' : u && g.black.toLowerCase() === u ? 'b' : turn;
+  const rating = (c) => +(c === 'w' ? g.whiteElo : g.blackElo) || DEFAULT_ELO;
+  const level = $('my-level').value;
   const v = {
-    base, main, chess: replayTo(main.game, base), engine: new Engine(), active: true, paused: false, fast: false, ended: null,
-    mainReport: buildReport(main.game.plies, main.evals, main.game.bookPlies),
+    base, main, me, engine: new Engine(), active: true, ended: null, busy: false, pending: null,
+    oppElo: rating(me === 'w' ? 'b' : 'w'),
+    myElo: level === 'max' ? null : rating(me) + +level,
+    mainReport: buildReport(g.plies, main.evals, g.bookPlies),
   };
   state.variation = v;
-  state.game = {
-    ...main.game, fens: main.game.fens.slice(0, base + 1), plies: main.game.plies.slice(0, base), bookPlies: Math.min(main.game.bookPlies, base),
-  };
+  state.game = { ...g, fens: g.fens.slice(0, base + 1), plies: g.plies.slice(0, base), bookPlies: Math.min(g.bookPlies, base) };
   state.evals = main.evals.slice(0, base + 1);
+  v.ready = v.engine.init();
+  v.pending = prepareNext(v);
+  v.pending.catch(() => {});
   refreshAll();
-  runVariation(v);
 }
 
-async function runVariation(v) {
-  const { engine, chess } = v;
-  const depth = +$('depth').value;
+// Calcule à l'avance le coup suivant : la touche › répond alors tout de suite.
+async function prepareNext(v) {
+  await v.ready;
+  const { engine } = v;
+  const game = state.game;
+  const n = game.plies.length;
+  const c = replayTo(game, n);
+  const ucis = game.plies.map((p) => p.uci);
+  const elo = c.turn() === v.me ? v.myElo : v.oppElo;
+  let uci = state.evals[n].best;
+  if (elo != null) {
+    const list = await engine.candidates(game.fens[0], ucis, CANDIDATE_DEPTH, CANDIDATE_COUNT);
+    if (list.length) uci = pickHuman(list, elo);
+  }
+  const legal = c.moves().length;
+  const prev = game.plies[n - 1];
+  const m = c.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] });
+  const ply = {
+    san: m.san, color: m.color, from: m.from, to: m.to, uci: m.from + m.to + (m.promotion || ''), legal, captured: m.captured, piece: m.piece,
+    sacrifice: isSacrifice(m), recapture: !!(m.captured && prev && prev.captured && prev.to === m.to), opening: '',
+  };
+  let ended = endText(c);
+  let ev;
+  if (ended) {
+    ev = { score: c.isCheckmate() ? { type: 'mate', value: 0, mated: c.turn() === 'w' ? 'white' : 'black' } : { type: 'cp', value: 0 }, best: null };
+  } else {
+    const r = await engine.evaluate(game.fens[0], +$('depth').value, null, [...ucis, ply.uci]);
+    ev = { score: toWhiteScore(r.score, c.turn() === 'w'), best: r.best, pv: r.pv };
+    if (n + 1 - v.base >= VARIATION_MAX_PLIES) ended = `Arrêt après ${VARIATION_MAX_PLIES} coups.`;
+  }
+  return { ply, fen: c.fen(), ev, ended };
+}
+
+async function advanceVariation() {
+  const v = state.variation;
+  if (!v || v.busy || v.ended) return;
+  v.busy = true;
+  renderGuide();
   try {
-    await engine.init();
-    while (v.active) {
-      if (v.paused) { await pause(150); continue; }
-      const game = state.game;
-      const last = state.evals[state.evals.length - 1];
-      const t0 = performance.now();
-      const prev = game.plies[game.plies.length - 1];
-      const legal = chess.moves().length;
-      const m = chess.move(parseUciMove(last.best));
-      const captured = m.captured;
-      game.plies.push({
-        san: m.san, color: m.color, from: m.from, to: m.to, uci: m.from + m.to + (m.promotion || ''), legal, captured, piece: m.piece, sacrifice: false,
-        recapture: !!(captured && prev && prev.captured && prev.to === m.to), opening: '',
-      });
-      game.fens.push(chess.fen());
-      const ended = endText(chess);
-      if (ended) {
-        state.evals.push({ score: chess.isCheckmate() ? { type: 'mate', value: 0, mated: chess.turn() === 'w' ? 'white' : 'black' } : { type: 'cp', value: 0 }, best: null });
-        v.ended = ended;
-      } else if (game.plies.length - v.base >= VARIATION_MAX_PLIES) {
-        v.ended = `Arrêt après ${VARIATION_MAX_PLIES} coups joués par l’ordi.`;
-      } else {
-        const r = await engine.evaluate(game.fens[0], depth, null, game.plies.map((p) => p.uci));
-        if (!v.active) return;
-        state.evals.push({ score: toWhiteScore(r.score, chess.turn() === 'w'), best: r.best, pv: r.pv });
-      }
-      if (!v.ended && !v.fast) await pause(Math.max(0, VARIATION_PACE - (performance.now() - t0)));
-      if (!v.active) return;
-      if (!v.paused) state.cursor = game.plies.length;
-      refreshAll();
-      if (v.ended) { v.engine.stop(); return; }
-    }
+    const next = await v.pending;
+    if (!v.active) return;
+    state.game.plies.push(next.ply);
+    state.game.fens.push(next.fen);
+    state.evals.push(next.ev);
+    v.ended = next.ended;
+    v.busy = false;
+    state.cursor = state.game.plies.length;
+    refreshAll();
+    if (voice.auto) speakCurrent(); else voice.stop();
+    if (v.ended) v.engine.stop();
+    else { v.pending = prepareNext(v); v.pending.catch(() => {}); }
   } catch (err) {
-    if (v.active) { v.ended = 'Le moteur s’est arrêté. Reviens à la partie, puis réessaie.'; refreshAll(); }
+    if (v.active) { v.busy = false; v.ended = 'Le moteur s’est arrêté. Reviens à la partie, puis réessaie.'; refreshAll(); }
   }
 }
 
-function parseUciMove(u) { return { from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] }; }
+function stepForward() {
+  const v = state.variation;
+  if (v && !v.ended && state.cursor === state.game.plies.length) advanceVariation();
+  else go(state.cursor + 1, true);
+}
 
 function exitVariation() {
   const v = state.variation;
@@ -656,6 +691,7 @@ function exitVariation() {
   state.game = v.main.game;
   state.evals = v.main.evals;
   state.cursor = v.main.cursor;
+  voice.stop();
   refreshAll();
 }
 
@@ -668,9 +704,8 @@ function renderGuide() {
     $('guide-start').disabled = !!job || !ev || !ev.best;
     return;
   }
-  $('guide-text').textContent = v.ended || `L’ordi joue depuis ${v.base === 0 ? 'le début' : moveLabel(v.base - 1, v.main.game.plies[v.base - 1].san)}`;
-  $('guide-pause').hidden = !!v.ended;
-  $('guide-pause').textContent = v.paused ? 'Reprendre' : 'Pause';
+  const levels = `Toi ${v.myElo == null ? 'max' : v.myElo} · Adversaire ${v.oppElo}`;
+  $('guide-text').textContent = v.ended || (v.busy ? 'Le coup arrive…' : `${levels} · touche ›`);
 }
 
 function openGame(pgn, key, { run = true, url = null } = {}) {
@@ -801,24 +836,12 @@ $('depth').addEventListener('change', () => {
 });
 $('cancel').addEventListener('click', () => { stopJob(); setStatus('Analyse arrêtée. Les coups déjà calculés restent affichés.'); refreshAll(); });
 $('first').addEventListener('click', () => go(0, true));
-$('prev').addEventListener('click', () => {
-  if (state.variation && !state.variation.ended) state.variation.paused = true;
-  go(state.cursor - 1, true);
-});
-$('next').addEventListener('click', () => go(state.cursor + 1, true));
-$('last').addEventListener('click', () => {
-  if (state.variation && !state.variation.ended) { state.variation.fast = true; state.variation.paused = false; renderGuide(); }
-  go(1e4, true);
-});
+$('prev').addEventListener('click', () => go(state.cursor - 1, true));
+$('next').addEventListener('click', stepForward);
+$('last').addEventListener('click', () => go(1e4, true));
 $('guide-start').addEventListener('click', startVariation);
-$('guide-pause').addEventListener('click', () => {
-  const v = state.variation;
-  if (!v) return;
-  v.paused = !v.paused;
-  v.fast = false;
-  if (!v.paused) go(1e4);
-  renderGuide();
-});
+$('my-level').value = store.get('my-level') || '400';
+$('my-level').addEventListener('change', (e) => store.set('my-level', e.target.value));
 $('guide-exit').addEventListener('click', exitVariation);
 $('voice').addEventListener('click', () => {
   voice.auto = !voice.auto;
@@ -857,7 +880,7 @@ boardEl.addEventListener('touchend', (e) => {
   if (swipeX == null) return;
   const dx = e.changedTouches[0].clientX - swipeX;
   swipeX = null;
-  if (Math.abs(dx) > 40) go(state.cursor + (dx < 0 ? 1 : -1), true);
+  if (Math.abs(dx) > 40) { if (dx < 0) stepForward(); else go(state.cursor - 1, true); }
 }, { passive: true });
 
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
@@ -874,6 +897,7 @@ new ResizeObserver(renderChart).observe(chart);
 document.addEventListener('keydown', (e) => {
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
   const map = { ArrowLeft: state.cursor - 1, ArrowRight: state.cursor + 1, Home: 0, End: 1e4 };
+  if (e.key === 'ArrowRight') { e.preventDefault(); stepForward(); return; }
   if (e.key in map) { e.preventDefault(); go(map[e.key], true); }
 });
 
