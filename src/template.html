@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#E9EDF2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#11161D" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Analyzer">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Chess Analyzer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>/*CHESSGROUND*/</style>
+<style>
+/* Plan : un poste d'analyse à trois zones, parties à gauche, échiquier au centre, verdict et feuille de partie à droite. */
+@font-face { font-family: "Figurines"; src: local("Segoe UI Symbol"), local("Apple Symbols"), local("Arial Unicode MS"), local("DejaVu Sans"); unicode-range: U+265A-265F; size-adjust: 125%; }
+:root {
+  --bg: #E9EDF2; --panel: #F8FAFC; --ink: #16202C; --muted: #5A6878; --line: #CDD6E0;
+  --accent: #2740C4; --accent-soft: #DCE2FA;
+  --coord-on-light: #4A5C72; --coord-on-dark: #F3F6F9;
+  --sq-light: #E3E8EE; --sq-dark: #7F93AB; --bar-black: #27313D; --bar-white: #F5F7FA;
+  --area: #B9C3D0; --curve: #27313D;
+  --on-mark: #FFFFFF;
+  --brilliant: #7A3FD1; --great: #1F6FB5; --best: #0B7F6B; --excellent: #2E8B3D; --good: #5F7F2A; --book: #6C7A8A; --miss: #9A4B7A; --inaccuracy: #A87900; --mistake: #D2570A; --blunder: #C21F3F; --forced: #4B5C72;
+  --display: "Figurines", "Sora", "Avenir Next", system-ui, sans-serif;
+  --body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "Figurines", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11161D; --panel: #1A212B; --ink: #E7ECF2; --muted: #98A6B6; --line: #2E3946;
+    --accent: #8FA2FF; --accent-soft: #28315C;
+    --coord-on-light: #33465C; --coord-on-dark: #E3E9F0;
+    --sq-light: #B4C0CE; --sq-dark: #5A6F88; --bar-black: #0B0F14; --bar-white: #E7ECF2;
+    --area: #47566A; --curve: #E7ECF2;
+    --on-mark: #10161D;
+    --brilliant: #BE9BFF; --great: #6DB8F2; --best: #4FC7AE; --excellent: #6FCF7E; --good: #A9C468; --book: #A3B0BF; --miss: #E59BCB; --inaccuracy: #E0B23C; --mistake: #F08A3C; --blunder: #F4637F; --forced: #93A4BA;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11161D; --panel: #1A212B; --ink: #E7ECF2; --muted: #98A6B6; --line: #2E3946;
+  --accent: #8FA2FF; --accent-soft: #28315C;
+  --coord-on-light: #33465C; --coord-on-dark: #E3E9F0;
+    --sq-light: #B4C0CE; --sq-dark: #5A6F88; --bar-black: #0B0F14; --bar-white: #E7ECF2;
+  --area: #47566A; --curve: #E7ECF2;
+  --on-mark: #10161D;
+    --brilliant: #BE9BFF; --great: #6DB8F2; --best: #4FC7AE; --excellent: #6FCF7E; --good: #A9C468; --book: #A3B0BF; --miss: #E59BCB; --inaccuracy: #E0B23C; --mistake: #F08A3C; --blunder: #F4637F; --forced: #93A4BA;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.45 var(--body); padding: 14px max(16px, env(safe-area-inset-right, 0px)) 24px max(16px, env(safe-area-inset-left, 0px)); }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.top { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 14px; max-width: 1480px; margin: 0 auto 12px; }
+h1 { font: 600 19px/1.2 var(--display); letter-spacing: -.01em; margin: 0; }
+.top p { margin: 0; color: var(--muted); font-size: 13px; }
+
+.app { display: grid; grid-template-columns: 280px minmax(0, 1fr) 372px; gap: 16px; max-width: 1480px; margin: 0 auto; align-items: start; }
+.col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; }
+label, .cap { display: block; font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .02em; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.inline { display: flex; gap: 6px; }
+input[type=text], select, textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 7px 9px; width: 100%; min-width: 0; }
+textarea { font: 12px/1.4 var(--mono); height: 92px; resize: vertical; }
+.btn { background: var(--accent); color: var(--panel); border: 0; border-radius: 4px; padding: 7px 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.btn:disabled { opacity: .55; cursor: wait; }
+.ghost { background: none; color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 4px 9px; cursor: pointer; font-size: 13px; }
+.ghost:hover { border-color: var(--accent); }
+form.stack, .stack { display: flex; flex-direction: column; gap: 10px; }
+
+.games-panel { padding: 0; overflow: hidden; }
+#list-msg { margin: 0; padding: 12px; color: var(--muted); font-size: 13px; }
+.error { color: var(--blunder) !important; }
+#games { display: flex; flex-direction: column; max-height: min(52vh, 560px); overflow-y: auto; }
+.game { display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 8px 12px; text-align: left; cursor: pointer; }
+.game:last-child { border-bottom: 0; }
+.game:hover { background: var(--accent-soft); }
+.game.on { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.res { flex: none; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 4px; font: 600 12px var(--mono); border: 1px solid var(--line); }
+.res.win { background: var(--excellent); color: var(--panel); border-color: transparent; }
+.res.loss { background: var(--blunder); color: var(--panel); border-color: transparent; }
+.g-main { display: flex; flex-direction: column; min-width: 0; }
+.g-opp { font-weight: 600; display: flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
+.g-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.side { flex: none; width: 9px; height: 9px; border-radius: 2px; border: 1px solid var(--muted); }
+.side.w { background: var(--bar-white); } .side.b { background: var(--bar-black); }
+
+details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+details[open] summary { margin-bottom: 8px; }
+
+.stage { display: flex; gap: 8px; width: min(100%, calc(100vh - 150px)); min-width: 280px; margin: 0 auto; max-width: 100%; }
+#bar { position: relative; flex: none; width: 20px; background: var(--bar-black); border-radius: 3px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+#bar.flip { justify-content: flex-start; }
+#bar-white { background: var(--bar-white); height: var(--w, 50%); transition: height .2s ease, width .2s ease; }
+.board-wrap { flex: 1; min-width: 0; }
+#board { width: 100%; aspect-ratio: 1; }
+.controls { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px; }
+#bar-value { font: 600 13px var(--mono); min-width: 58px; text-align: center; font-variant-numeric: tabular-nums; }
+.nav { min-width: 40px; padding: 6px 10px; }
+
+cg-board { background-color: var(--sq-light); background-image: conic-gradient(var(--sq-dark) 25%, transparent 0 50%, var(--sq-dark) 0 75%, transparent 0); background-size: 25% 25%; border-radius: 3px; }
+cg-board square.last-move { background-color: color-mix(in srgb, var(--accent) 34%, transparent); }
+.cg-wrap { overflow: hidden; border-radius: 3px; }
+.cg-wrap coords { opacity: 1; }
+.cg-wrap coords coord { font: 600 10px var(--mono); text-shadow: none; flex: 1 1 0; }
+.cg-wrap coords.ranks { top: 0; left: 3px; }
+.cg-wrap coords.ranks coord { transform: none; padding-top: 2px; }
+.cg-wrap coords.files { left: 0; bottom: 0; height: 14px; text-transform: lowercase; text-align: right; }
+.cg-wrap coords.files coord { padding-right: 3px; }
+.orientation-white .ranks :nth-child(odd), .orientation-white .files :nth-child(even), .orientation-black .ranks :nth-child(even), .orientation-black .files :nth-child(odd) { color: var(--coord-on-light); }
+.orientation-white .ranks :nth-child(even), .orientation-white .files :nth-child(odd), .orientation-black .ranks :nth-child(odd), .orientation-black .files :nth-child(even) { color: var(--coord-on-dark); }
+cg-board square.check { background: none; }
+
+#example { background: var(--accent-soft); border-radius: 4px; padding: 8px 10px; font-size: 13px; margin: 0; }
+.prog-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
+.track { height: 4px; background: var(--line); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+#bar-fill { height: 100%; width: 0; background: var(--accent); transition: width .15s linear; }
+#status { margin: 0; font-size: 13px; color: var(--muted); }
+#status:empty { display: none; }
+#m-players { display: none; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 600; flex: none; }
+#m-players span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+#flip2 { display: none; }
+
+.players { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; align-items: center; font-weight: 600; font-size: 14px; margin-bottom: 8px; }
+.players span:last-child { text-align: right; }
+.players span { overflow-wrap: anywhere; }
+#p-result { font: 600 13px var(--mono); color: var(--muted); }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
+td, th { padding: 3px 0; border-top: 1px solid var(--line); }
+th { font-weight: 400; color: var(--muted); text-align: center; }
+td { width: 22%; font: 600 13px var(--mono); }
+td:last-child { text-align: right; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.dot.inaccuracy { background: none; border: 2px solid var(--inaccuracy); }
+.dot.mistake { background: var(--mistake); }
+.dot.blunder { background: var(--blunder); width: 10px; height: 10px; vertical-align: 0; }
+
+.chart-box { position: relative; margin-top: 6px; }
+#chart { display: block; width: 100%; height: 124px; cursor: crosshair; touch-action: pan-y; }
+.c-area { fill: var(--area); opacity: .75; }
+.c-line { fill: none; stroke: var(--curve); stroke-width: 2; stroke-linejoin: round; }
+.c-mid { stroke: var(--muted); stroke-dasharray: 3 4; stroke-width: 1; }
+.c-cursor { stroke: var(--accent); stroke-width: 2; }
+.c-pt { stroke: var(--panel); stroke-width: 2; }
+.c-pt.inaccuracy { fill: var(--panel); stroke: var(--inaccuracy); }
+.c-pt.mistake { fill: var(--mistake); }
+.c-pt.blunder { fill: var(--blunder); }
+#tip { font-family: var(--mono); position: absolute; top: -4px; background: var(--ink); color: var(--panel); border-radius: 4px; padding: 3px 7px; font-size: 12px; display: flex; gap: 6px; pointer-events: none; white-space: nowrap; }
+.chart-cap { display: flex; justify-content: space-between; gap: 8px; }
+
+#verdict { display: flex; flex-direction: column; gap: 6px; min-height: 84px; }
+#verdict p { margin: 0; }
+.v-head { display: flex; align-items: center; gap: 10px; }
+.v-title { font: 600 16px var(--display); display: flex; flex-direction: column; gap: 0; flex: 1; min-width: 0; }
+.v-kind { font: 600 13px var(--body); color: var(--muted); }
+#verdict[data-kind] .v-kind { color: var(--kc); }
+.v-body { display: flex; flex-direction: column; gap: 4px; }
+.v-text { font-size: 14px; }
+.v-line { font: 12px/1.5 var(--mono); color: var(--muted); }
+.listen { flex: none; }
+[data-kind=brilliant] { --kc: var(--brilliant); } [data-kind=great] { --kc: var(--great); } [data-kind=best] { --kc: var(--best); } [data-kind=excellent] { --kc: var(--excellent); } [data-kind=good] { --kc: var(--good); } [data-kind=book] { --kc: var(--book); } [data-kind=inaccuracy] { --kc: var(--inaccuracy); } [data-kind=mistake] { --kc: var(--mistake); } [data-kind=miss] { --kc: var(--miss); } [data-kind=blunder] { --kc: var(--blunder); } [data-kind=forced] { --kc: var(--forced); } 
+.mark { flex: none; display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--kc); color: var(--on-mark); font: 700 16px/1 var(--body); }
+.mark.tiny { width: 18px; height: 18px; font-size: 10px; vertical-align: middle; }
+#badge { position: absolute; z-index: 5; width: 5.8%; letter-spacing: -.04em; aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center; background: var(--kc); color: var(--on-mark); font: 700 clamp(9px, 1.8vmin, 15px)/1 var(--body); pointer-events: none; box-shadow: 0 0 0 1.5px var(--panel); }
+.board-wrap { position: relative; }
+#strip { display: none; }
+.tabs { display: none; }
+
+#moves { display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr); gap: 1px 4px; max-height: 300px; overflow-y: auto; position: relative; align-items: center; }
+.num { color: var(--muted); font: 12px var(--mono); }
+.mv { background: none; border: 0; border-radius: 3px; padding: 3px 6px; text-align: left; font: 13px var(--mono); cursor: pointer; }
+.mv:hover { background: var(--accent-soft); }
+.mv.on { background: var(--accent); color: var(--panel); }
+.mv .mark { margin-left: 4px; }
+.foot { max-width: 1480px; margin: 12px auto 0; font-size: 12px; color: var(--muted); }
+
+@media (max-width: 1180px) {
+  .app { grid-template-columns: minmax(0, 1fr) 340px; }
+  .side-col { grid-column: 1 / -1; }
+  #games { max-height: 240px; }
+  .stage { width: min(100%, 620px); }
+}
+@media (max-width: 780px) {
+  html, body { height: 100%; overflow: hidden; }
+  body { padding: 0; display: flex; flex-direction: column; height: 100dvh; padding-top: env(safe-area-inset-top, 0px); }
+  .top, .foot { display: none; }
+  .app { display: flex; flex-direction: column; align-items: stretch; width: 100%; max-width: none; margin: 0; gap: 8px; flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 8px max(10px, env(safe-area-inset-right, 0px)) 8px max(10px, env(safe-area-inset-left, 0px)); }
+  .col { display: contents; }
+  body[data-tab=analyse] [data-v]:not([data-v=analyse]),
+  body[data-tab=parties] [data-v]:not([data-v=parties]),
+  body[data-tab=bilan] [data-v]:not([data-v=bilan]) { display: none !important; }
+
+  body[data-tab=analyse] .app { overflow: hidden; }
+  #m-players { order: 1; display: flex; }
+  .stage { order: 2; flex: none; flex-direction: column; gap: 4px; min-width: 0; width: min(100%, calc(100dvh - 340px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))); min-width: 220px; margin: 0 auto; }
+  .board-wrap { flex: none; width: 100%; }
+  #bar { width: 100%; height: 7px; flex-direction: row; justify-content: flex-start; }
+  #bar.flip { flex-direction: row-reverse; justify-content: flex-start; }
+  #bar-white { height: 100%; width: var(--w, 50%); }
+  #progress { order: 3; padding: 6px 10px; }
+  #example { order: 3; padding: 5px 8px; font-size: 12px; }
+  #status { order: 3; font-size: 12px; }
+  #strip { order: 4; display: flex; gap: 4px; overflow-x: auto; flex: none; scrollbar-width: none; padding-bottom: 1px; }
+  #strip::-webkit-scrollbar { display: none; }
+  .chip { flex: none; display: inline-flex; align-items: center; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 5px 8px; font: 13px var(--mono); min-height: 34px; }
+  .chip.on { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  .chip.on .num { color: inherit; }
+  #verdict { order: 5; flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px; }
+  .v-text { font-size: 14px; line-height: 1.35; }
+  .controls { order: 6; display: grid; grid-template-columns: repeat(4, 1fr) auto; gap: 6px; flex: none; }
+  .controls .nav { min-height: 44px; font-size: 18px; }
+  #bar-value, #flip { display: none; }
+  #voice { min-height: 44px; }
+  #flip2 { display: inline-block; }
+
+  #games { max-height: none; }
+  .games-panel { overflow: visible; }
+  #moves { max-height: none; overflow: visible; }
+  input[type=text], select, textarea { font-size: 16px; }
+  .tabs { display: grid; grid-template-columns: repeat(3, 1fr); flex: none; background: var(--panel); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .tabs button { background: none; border: 0; min-height: 50px; font-weight: 600; font-size: 14px; color: var(--muted); cursor: pointer; }
+  .tabs button[aria-selected=true] { color: var(--accent); box-shadow: inset 0 2px 0 var(--accent); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body data-tab="analyse">
+<header class="top">
+  <h1>Chess Analyzer</h1>
+  <p>Stockfish calcule sur ton appareil. Tes parties ne sont envoyées à aucun serveur d’analyse.</p>
+</header>
+
+<main class="app">
+  <section class="col side-col" aria-label="Parties">
+    <form class="panel stack" id="player-form" data-v="parties">
+      <div class="field">
+        <label for="username">Pseudo Chess.com</label>
+        <div class="inline">
+          <input type="text" id="username" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="ton pseudo">
+          <button class="btn" id="load" type="submit">Charger</button>
+        </div>
+      </div>
+      <div class="field" id="month-row" hidden>
+        <label for="month">Mois</label>
+        <select id="month"></select>
+      </div>
+      <div class="field">
+        <label for="depth">Profondeur d’analyse</label>
+        <select id="depth">
+          <option value="10">Rapide (10)</option>
+          <option value="14" selected>Standard (14)</option>
+          <option value="18">Approfondie (18)</option>
+        </select>
+      </div>
+    </form>
+    <div class="panel games-panel" data-v="parties">
+      <p id="list-msg">Tes parties terminées apparaîtront ici, de la plus récente à la plus ancienne.</p>
+      <div id="games"></div>
+    </div>
+    <details class="panel" data-v="parties">
+      <summary>Coller un PGN</summary>
+      <form class="stack" id="pgn-form">
+        <label for="pgn">PGN d’une partie terminée</label>
+        <textarea id="pgn" spellcheck="false"></textarea>
+        <button class="btn" type="submit">Analyser ce PGN</button>
+      </form>
+    </details>
+  </section>
+
+  <section class="col" aria-label="Échiquier">
+    <div id="m-players" data-v="analyse"><span id="m-white"></span><span id="m-black"></span></div>
+    <div class="stage" data-v="analyse">
+      <div id="bar" aria-hidden="true"><div id="bar-white"></div></div>
+      <div class="board-wrap"><div id="board"></div><div id="badge" hidden></div></div>
+    </div>
+    <div class="controls" data-v="analyse">
+      <button class="ghost nav" id="first" type="button" aria-label="Début de partie">|‹</button>
+      <button class="ghost nav" id="prev" type="button" aria-label="Coup précédent">‹</button>
+      <span id="bar-value" title="Évaluation vue des Blancs, en pions">…</span>
+      <button class="ghost nav" id="next" type="button" aria-label="Coup suivant">›</button>
+      <button class="ghost nav" id="last" type="button" aria-label="Fin de partie">›|</button>
+      <button class="ghost" id="flip" type="button">Retourner</button>
+      <button class="ghost" id="voice" type="button" aria-pressed="true">Voix : oui</button>
+    </div>
+  </section>
+
+  <section class="col" aria-label="Analyse">
+    <p id="example" data-v="analyse">Exemple : Morphy, Paris 1858. Charge tes parties avec ton pseudo.</p>
+    <div class="panel" id="progress" data-v="analyse" hidden>
+      <div class="prog-head"><span id="progress-text">Démarrage du moteur…</span><button class="ghost" id="cancel" type="button">Arrêter</button></div>
+      <div class="track"><div id="bar-fill"></div></div>
+    </div>
+    <p id="status" role="status" data-v="analyse"></p>
+    <div id="strip" data-v="analyse" aria-label="Coups de la partie"></div>
+    <div class="panel" id="verdict" aria-live="polite" data-v="analyse"></div>
+    <div class="panel" data-v="bilan">
+      <div class="players"><span id="p-white"></span><span id="p-result"></span><span id="p-black"></span></div>
+      <table><tbody id="stats"></tbody></table>
+    </div>
+    <div class="panel" data-v="bilan">
+      <div class="chart-cap"><span class="cap">Chances de gain des Blancs</span><span class="cap">pointillé : 50 %</span></div>
+      <div class="chart-box"><svg id="chart" role="img" aria-label="Courbe des chances de gain des Blancs au fil de la partie. Le détail est dans la feuille de partie."></svg><div id="tip" hidden></div></div>
+    </div>
+    <div class="panel" data-v="bilan"><div id="moves"></div></div>
+  </section>
+</main>
+<nav class="tabs" aria-label="Sections">
+  <button type="button" data-go="analyse" aria-selected="true">Analyse</button>
+  <button type="button" data-go="parties" aria-selected="false">Parties</button>
+  <button type="button" data-go="bilan" aria-selected="false">Bilan</button>
+</nav>
+<p class="foot">Outil personnel indépendant, compatible avec les données publiques de Chess.com, sans affiliation avec Chess.com. Moteur : Stockfish 19 (version légère), GPL v3.</p>
+
+<script type="text/plain" id="sf-js">/*SF_JS*/</script>
+<script type="text/plain" id="sf-wasm">/*SF_WASM*/</script>
+<script>/*BUNDLE*/</script>
+</body>
+</html>
