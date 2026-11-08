@@ -4,7 +4,6 @@ import {
   buildReport, formatScore, GLYPHS, KINDS, LABELS, MATE_CP, parseInfo, pickHuman, scoreToCp, toWhiteScore, winPct, FAIR_RESULTS,
 } from './analysis.js';
 import { bookFromEcoUrl, explainMove, isSacrifice, sanToSpeech } from './explain.js';
-import sample from './sample.json';
 
 const API = 'https://api.chess.com/pub/player/';
 const FIGURINES = { K: '♚', Q: '♛', R: '♜', B: '♝', N: '♞' };
@@ -161,7 +160,7 @@ const moveLabel = (i, san) => `${moveNo(i)}${i % 2 ? '…' : '.'} ${fig(san)}`;
 
 function renderBoard() {
   const { game, cursor, report } = state;
-  if (!game) return;
+  if (!game) { renderVerdict(); renderGuide(); return; }
   const ply = cursor > 0 ? game.plies[cursor - 1] : null;
   const judged = ply && report ? report.moves[cursor - 1] : null;
   cg.set({
@@ -229,6 +228,10 @@ function renderVerdict() {
   const box = $('verdict');
   box.replaceChildren();
   box.removeAttribute('data-kind');
+  if (!game) {
+    box.append(h('p', { class: 'v-text' }, 'Choisis une partie dans l’onglet Parties.'));
+    return;
+  }
   if (cursor === 0) {
     box.append(h('p', { class: 'v-title' }, 'Position de départ'), h('p', { class: 'v-text' }, 'Navigue avec les flèches du clavier ou clique sur un coup.'));
     return;
@@ -573,6 +576,15 @@ async function findAlternatives(game, engine, depth, me) {
 /* ---------- Reprise : toi plus fort, l'adversaire à son Elo ---------- */
 
 const VARIATION_MAX_PLIES = 300;
+let maiaModule = null;
+
+async function loadMaia(v) {
+  const base = new URL('maia/', location.href).href;
+  maiaModule = maiaModule || await import(`${base}maia.mjs`);
+  await maiaModule.load(base, (pct) => { if (v.active) { v.loadPct = pct; renderGuide(); } });
+  v.loadPct = null;
+}
+
 const CANDIDATE_DEPTH = 10;
 const CANDIDATE_COUNT = 8;
 const DEFAULT_ELO = 1500;
@@ -609,12 +621,14 @@ function startVariation() {
     base, main, me, engine: new Engine(), active: true, ended: null, busy: false, pending: null,
     oppElo: rating(me === 'w' ? 'b' : 'w'),
     myElo: level === 'max' ? null : rating(me) + +level,
+    myRating: rating(me), loadPct: 0, maiaFailed: false,
     mainReport: buildReport(g.plies, main.evals, g.bookPlies),
   };
   state.variation = v;
   state.game = { ...g, fens: g.fens.slice(0, base + 1), plies: g.plies.slice(0, base), bookPlies: Math.min(g.bookPlies, base) };
   state.evals = main.evals.slice(0, base + 1);
-  v.ready = v.engine.init();
+  v.ready = Promise.all([v.engine.init(), loadMaia(v).catch(() => { v.maiaFailed = true; v.loadPct = null; })]);
+  v.ready.then(() => { if (v.active) renderGuide(); }).catch(() => {});
   v.pending = prepareNext(v);
   v.pending.catch(() => {});
   refreshAll();
@@ -631,8 +645,16 @@ async function prepareNext(v) {
   const elo = c.turn() === v.me ? v.myElo : v.oppElo;
   let uci = state.evals[n].best;
   if (elo != null) {
-    const list = await engine.candidates(game.fens[0], ucis, CANDIDATE_DEPTH, CANDIDATE_COUNT);
-    if (list.length) uci = pickHuman(list, elo);
+    const mine = c.turn() === v.me;
+    if (!v.maiaFailed) {
+      // L'adversaire joue comme à son Elo ; ton côté choisit plus souvent le coup principal.
+      const temperature = mine ? (elo >= 2000 ? 0.25 : 0.5) : 1;
+      const other = mine ? v.oppElo : (v.myElo || v.myRating);
+      uci = await maiaModule.move(c.fen(), elo, other, temperature);
+    } else {
+      const list = await engine.candidates(game.fens[0], ucis, CANDIDATE_DEPTH, CANDIDATE_COUNT);
+      if (list.length) uci = pickHuman(list, elo);
+    }
   }
   const legal = c.moves().length;
   const prev = game.plies[n - 1];
@@ -700,12 +722,14 @@ function renderGuide() {
   $('guide-start').hidden = !!v;
   $('guide-run').hidden = !v;
   if (!v) {
-    const ev = state.evals[state.cursor];
+    const ev = state.game ? state.evals[state.cursor] : null;
     $('guide-start').disabled = !!job || !ev || !ev.best;
     return;
   }
   const levels = `Toi ${v.myElo == null ? 'max' : v.myElo} · Adversaire ${v.oppElo}`;
-  $('guide-text').textContent = v.ended || (v.busy ? 'Le coup arrive…' : `${levels} · touche ›`);
+  const loading = v.loadPct != null && !v.maiaFailed ? `Modèle humain : ${v.loadPct} %` : '';
+  const note = v.maiaFailed ? ' · modèle humain indisponible' : '';
+  $('guide-text').textContent = v.ended || loading || (v.busy ? 'Le coup arrive…' : `${levels}${note} · touche ›`);
 }
 
 function openGame(pgn, key, { run = true, url = null } = {}) {
@@ -725,7 +749,6 @@ function openGame(pgn, key, { run = true, url = null } = {}) {
   state.cursor = 0;
   state.selectedUrl = url;
   state.key = key;
-  $('example').hidden = key !== 'sample';
   voice.stop();
   setStatus('');
   renderGames();
@@ -907,9 +930,5 @@ const savedDepth = store.get('depth');
 if (savedDepth && [...$('depth').options].some((o) => o.value === savedDepth)) $('depth').value = savedDepth;
 
 window.__openPgn = openGame;
-if (sample) {
-  openGame(sample.pgn, 'sample', { run: false });
-  state.evals = sample.evals;
-  state.cursor = 18;
-  refreshAll();
-}
+setTab('parties');
+refreshAll();

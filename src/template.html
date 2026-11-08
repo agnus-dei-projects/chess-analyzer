@@ -123,7 +123,6 @@ cg-board square.last-move { background-color: color-mix(in srgb, var(--accent) 3
 .orientation-white .ranks :nth-child(even), .orientation-white .files :nth-child(odd), .orientation-black .ranks :nth-child(odd), .orientation-black .files :nth-child(even) { color: var(--coord-on-dark); }
 cg-board square.check { background: none; }
 
-#example { background: var(--accent-soft); border-radius: 4px; padding: 8px 10px; font-size: 13px; margin: 0; }
 .prog-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
 .track { height: 4px; background: var(--line); border-radius: 2px; margin-top: 6px; overflow: hidden; }
 #bar-fill { height: 100%; width: 0; background: var(--accent); transition: width .15s linear; }
@@ -213,7 +212,6 @@ td:last-child { text-align: right; }
   .stage { order: 2; flex: none; gap: 4px; min-width: 0; width: min(100%, calc(100dvh - 352px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))); margin: 0 auto; }
   .board-wrap { flex: 1; min-width: 0; }
   #progress { order: 3; padding: 6px 10px; }
-  #example { order: 3; padding: 5px 8px; font-size: 12px; }
   #status { order: 3; font-size: 12px; }
   #strip { order: 4; display: flex; gap: 4px; overflow-x: auto; flex: none; scrollbar-width: none; padding-bottom: 1px; }
   #strip::-webkit-scrollbar { display: none; }
@@ -244,7 +242,7 @@ td:last-child { text-align: right; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
-<body data-tab="analyse">
+<body data-tab="parties">
 <header class="top">
   <h1>Chess Analyzer</h1>
   <p>Stockfish calcule sur ton appareil. Tes parties ne sont envoyées à aucun serveur d’analyse.</p>
@@ -325,7 +323,6 @@ td:last-child { text-align: right; }
   </section>
 
   <section class="col" aria-label="Analyse">
-    <p id="example" data-v="analyse">Exemple : Morphy, Paris 1858. Charge tes parties avec ton pseudo.</p>
     <div class="panel" id="progress" data-v="analyse" hidden>
       <div class="prog-head"><span id="progress-text">Démarrage du moteur…</span><button class="ghost" id="cancel" type="button">Arrêter</button></div>
       <div class="track"><div id="bar-fill"></div></div>
@@ -352,8 +349,8 @@ td:last-child { text-align: right; }
   </section>
 </main>
 <nav class="tabs" aria-label="Sections">
-  <button type="button" data-go="analyse" aria-selected="true">Analyse</button>
-  <button type="button" data-go="parties" aria-selected="false">Parties</button>
+  <button type="button" data-go="analyse" aria-selected="false">Analyse</button>
+  <button type="button" data-go="parties" aria-selected="true">Parties</button>
   <button type="button" data-go="bilan" aria-selected="false">Bilan</button>
 </nav>
 <p class="foot">Outil personnel indépendant, compatible avec les données publiques de Chess.com, sans affiliation avec Chess.com. Moteur : Stockfish 19 (version légère), GPL v3.</p>

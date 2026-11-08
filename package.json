@@ -13,6 +13,8 @@
     "chess.js": "^1.4.0",
     "chessground": "^9.2.1",
     "esbuild": "^0.28.2",
+    "maia3-js": "0.2.0",
+    "onnxruntime-web": "1.31.1",
     "stockfish": "^19.0.1"
   }
 }
