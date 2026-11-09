@@ -738,7 +738,7 @@ function openGame(pgn, key, { run = true, url = null } = {}) {
   setStatus('');
   renderGames();
   refreshAll();
-  setTab('analyse');
+  showAnalysis();
   if (run) analyze(game, key);
 }
 
@@ -879,7 +879,10 @@ function setTab(name) {
   document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', b.dataset.go === name ? 'true' : 'false'));
   renderChart();
 }
-document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.go)));
+document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => { location.hash = b.dataset.go; }));
+function showAnalysis() {
+  if (location.hash === '#analyse') setTab('analyse'); else location.hash = 'analyse';
+}
 
 // Glisser sur l'échiquier pour changer de coup.
 let swipeX = null;
@@ -929,25 +932,37 @@ const trainer = createTrainer({
   openGame: (pgn) => { location.hash = 'analyse'; openGame(pgn, `train:${Date.now()}`); },
   username: () => state.username || store.get('username') || '',
 });
+const phone = () => window.matchMedia('(max-width: 780px)').matches;
 const SCREENS = {
   '': { id: 'home', title: 'Chess Analyzer' },
-  analyse: { id: 'analyse', title: 'Analyse de partie', back: '' },
-  exercices: { id: 'hub', title: 'Exercices', back: '' },
-  problemes: { id: 'train', title: 'Problèmes', back: 'exercices' },
+  parties: { id: 'analyse', tab: 'parties', title: 'Analyse de partie', back: () => '' },
+  // Sur téléphone, Analyse et Bilan sont des écrans successifs ; sur ordinateur, tout est visible d'un coup.
+  analyse: { id: 'analyse', tab: 'analyse', title: 'Analyse de partie', back: () => (phone() ? 'parties' : '') },
+  bilan: { id: 'analyse', tab: 'bilan', title: 'Analyse de partie', back: () => (phone() ? 'analyse' : '') },
+  exercices: { id: 'hub', title: 'Exercices', back: () => '' },
+  problemes: { id: 'train', title: 'Problèmes', back: () => 'exercices' },
 };
 function route() {
   const key = location.hash.slice(1);
+  if (key === 'analyse' && !state.game) { location.replace('#parties'); return; }
   const sit = key.startsWith('situation-') ? key.slice(10) : null;
-  const def = sit ? { id: 'train', title: trainer.titleOf(sit), back: 'exercices' } : (SCREENS[key] || SCREENS['']);
+  const def = sit ? { id: 'train', title: trainer.titleOf(sit), back: () => 'exercices' } : (SCREENS[key] || SCREENS['']);
   document.body.dataset.screen = def.id;
   document.querySelectorAll('.screen').forEach((s) => { s.hidden = s.id !== `screen-${def.id}`; });
   $('bar-title').textContent = def.title;
-  $('bar-back').hidden = def.back === undefined;
-  $('bar-back').onclick = () => { location.hash = def.back; };
+  $('bar-back').hidden = !def.back;
+  $('bar-back').onclick = () => {
+    // En « Rejouer », le retour ramène d'abord à la partie analysée.
+    if (key === 'analyse' && state.variation) exitVariation();
+    else location.hash = def.back();
+  };
+  $('bar-resume').hidden = !state.game || key === 'analyse';
   voice.stop();
+  if (def.tab) setTab(def.tab);
   if (def.id === 'hub' || def.id === 'home') trainer.renderHub();
   if (def.id === 'train') trainer.open(sit || 'puzzle'); else trainer.close();
   if (def.id === 'analyse') { cg.redrawAll(); renderChart(); }
 }
+$('bar-resume').addEventListener('click', () => { location.hash = 'analyse'; });
 window.addEventListener('hashchange', route);
 route();
