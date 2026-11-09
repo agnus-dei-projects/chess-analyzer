@@ -427,6 +427,65 @@ export function bookFromEcoUrl(url, plies) {
 
 const sentence = (t) => `${t[0].toUpperCase()}${t.slice(1)}.`;
 
+const legalOn = (fen, sq) => new Chess(fen).moves({ square: sq, verbose: true }).length;
+function flipTurn(fen) {
+  const p = fen.split(' '); p[1] = p[1] === 'w' ? 'b' : 'w'; p[3] = '-';
+  return p.join(' ');
+}
+const unsafe = (c, sq, type, owner) => {
+  const foes = c.attackers(sq, opp(owner));
+  if (!foes.length) return false;
+  if (!c.attackers(sq, owner).length) return true;
+  return foes.some((s) => V[c.get(s).type] < V[type] && c.get(s).type !== 'k');
+};
+
+// Ce que fait un coup, décrit par son effet. Chaque phrase est un fait lu sur l'échiquier.
+function purposes({ fenBefore, steps, mover, prev }) {
+  const first = steps[0];
+  if (!first) return [];
+  const m = first.m; const foe = opp(mover); const out = [];
+  const c0 = new Chess(fenBefore); const c1 = new Chess(first.fen);
+  const board0 = c0.board().flat().filter(Boolean);
+  if (c0.inCheck()) {
+    const king = board0.find((p) => p.type === 'k' && p.color === mover).square;
+    if (m.captured && c0.attackers(king, foe).includes(m.to)) out.push('ça élimine la pièce qui donnait échec');
+    else out.push(m.piece === 'k' ? 'le roi se met hors de l’échec' : 'ça interpose une pièce pour parer l’échec');
+  }
+  if (m.captured && prev && prev.captured && prev.to === m.to) out.push('ça reprend la pièce qui vient de capturer');
+  if (m.piece !== 'k' && unsafe(c0, m.from, m.piece, mover) && !unsafe(c1, m.to, m.piece, mover)) out.push(`ça met ${the(m.piece, mover)} à l’abri`);
+  const guarded = board0.find((p) => p.color === mover && p.type !== 'k' && p.square !== m.from && c0.attackers(p.square, foe).length && !c0.attackers(p.square, mover).length && c1.attackers(p.square, mover).includes(m.to) && c1.get(p.square)?.type === p.type);
+  if (guarded) out.push(`ça défend ${the(guarded.type, mover)} en ${tok(guarded.square)}`);
+  const taken = steps[1] && steps[1].m.captured && steps[1].m.to === m.to;
+  if (!taken && 'qrbn'.includes(m.piece)) {
+    const same = c1.attackers(m.to, foe).find((s) => c1.get(s).type === m.piece);
+    if (same && c1.attackers(m.to, mover).length) out.push(`ça propose l’échange ${FEM[m.piece] ? 'des' : 'des'} ${NAME[m.piece]}s`);
+  }
+  if (!taken) {
+    const hit = targets(first.fen, m.to).filter((t) => t.type !== 'k');
+    if (hit[0]) out.push(`ça attaque ${the(hit[0].type, foe)} en ${tok(hit[0].square)}`);
+  }
+  if (m.san.endsWith('+')) out.push('ça force le roi adverse à réagir');
+  const pawns = c1.board().flat().filter((p) => p && p.type === 'p');
+  if (m.piece === 'k' && pawns.length && !board0.some((p) => p.type === 'q')) {
+    const dist = (sq) => Math.min(...pawns.map((p) => Math.max(Math.abs(fileIdx(p.square) - fileIdx(sq)), Math.abs(+p.square[1] - +sq[1]))));
+    if (dist(m.to) < dist(m.from)) out.push('le roi se rapproche des pions');
+    else if (Math.abs(fileIdx(m.to) - 3.5) < Math.abs(fileIdx(m.from) - 3.5)) out.push('le roi se rapproche du centre');
+  }
+  if (m.piece === 'p' && !m.captured && (mover === 'w' ? +m.to[1] >= 4 : +m.to[1] <= 5)) out.push('ça gagne de l’espace');
+  if ('nbrq'.includes(m.piece)) {
+    const before = legalOn(c0.turn() === mover ? fenBefore : flipTurn(fenBefore), m.from);
+    let after = 0;
+    if (!c1.inCheck()) { try { after = legalOn(flipTurn(first.fen), m.to); } catch { after = 0; } }
+    if (after >= before + 3) out.push(`ça donne plus de cases ${FEM[m.piece] ? 'à la' : 'au'} ${NAME[m.piece]}`);
+  }
+  if (steps[2] && steps[2].m.color === mover) out.push(`l’idée est de continuer par ${tok(steps[2].m.san)}`);
+  else if (steps[1]) out.push(`la réponse attendue est ${tok(steps[1].m.san)}`);
+  return out;
+}
+
+const keyOf = (t) => t.split(' ').slice(0, 2).join(' ');
+const pick = (list, avoid) => list.find((t) => keyOf(t) !== avoid) || list[0] || '';
+
 // Pourquoi un coup proposé dans un problème est refusé, sans dévoiler la solution.
 export function explainWrongMove({ fenBefore, fenAfter, ply, after, themes }) {
   const mover = ply.color;
@@ -451,7 +510,7 @@ export function explainWrongMove({ fenBefore, fenAfter, ply, after, themes }) {
  * Renvoie { sentences, spoken, line }.
  * La cause vient d'abord. Le coup conseillé et sa raison tiennent en une seule phrase.
  */
-export function explainMove({ fenBefore, fenAfter, ply, before, after, move, index, prev }) {
+export function explainMove({ fenBefore, fenAfter, ply, before, after, move, index, prev, avoid }) {
   const mover = ply.color;
   const moveNumber = Math.floor(index / 2) + 1;
   const special = specialSentence(move, ply);
@@ -463,11 +522,14 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
 
   const STRONG = /\bmat\b|gagne|à la fois|cloue|défenseur|menace de prendre (le cavalier|le fou|la tour|la dame)|menace un mat/;
 
+  const playedLine = [...walk(fenBefore, [ply.uci]), ...walk(fenAfter, after.pv)];
+  const describe = (why) => [...why.filter((t) => !/^sinon/.test(t)), ...purposes({ fenBefore, steps: playedLine, mover, prev })];
+
   if (move.playedBest) {
-    const playedSteps = [...walk(fenBefore, [ply.uci]), ...walk(fenAfter, after.pv)];
-    const why = reasonsFor({ fenBefore, steps: playedSteps, mover, moveNumber, mateIn: mateFor(before.score), prev, score: before.score, threat: before.threat, playedRecapture: true });
+    const why = reasonsFor({ fenBefore, steps: playedLine, mover, moveNumber, mateIn: mateFor(before.score), prev, score: before.score, threat: before.threat, playedRecapture: true });
     const strong = why.find((t) => STRONG.test(t));
-    return { sentences: [special, strong ? sentence(strong) : ''].filter(Boolean), notes: [], line: lineOf(playedSteps.slice(1), 4) };
+    const chosen = strong || pick(describe(why), avoid);
+    return { sentences: [special, chosen ? sentence(chosen) : ''].filter(Boolean), notes: [], line: lineOf(playedLine.slice(1), 4), key: keyOf(chosen || '') };
   }
 
   const neg = negative({ fenBefore, fenAfter, ply, after, mover });
@@ -489,14 +551,19 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
   const line = lineOf(bestSteps.slice(1), 4);
   if (!bestSteps.length) return { sentences: [...lead, ...reasons], notes: [], line };
   const action = moveAction(bestSteps[0].m);
-  const better = `Mieux valait ${action}${proven[0] ? `, car ${proven[0]}` : ''}.`;
   if (move.loss < 5) {
-    // Bon coup : la voix se tait, la nuance reste écrite à part.
-    return { sentences: lead, notes: [`Légèrement mieux : ${action}.`], line };
+    // Bon coup : on dit ce qu'il fait, la nuance reste écrite à part.
+    const own = reasonsFor({ fenBefore, steps: playedLine, mover, moveNumber, mateIn: mateFor(after.score), prev, score: after.score, playedRecapture });
+    const chosen = pick(describe(own), avoid);
+    return { sentences: [special, chosen ? sentence(chosen) : ''].filter(Boolean), notes: [`Légèrement mieux : ${action}.`], line, key: keyOf(chosen || '') };
   }
+  // Sans raison prouvée, on décrit l'effet du coup conseillé sans le présenter comme une preuve.
+  const effect = !proven[0] ? purposes({ fenBefore, steps: bestSteps, mover, prev }).find((t) => !/^l’idée|^la réponse/.test(t)) || general[0] : '';
+  const better = `Mieux valait ${action}${proven[0] ? `, car ${proven[0]}` : effect ? ` : ${effect}` : ''}.`;
   return {
     sentences: [...reasons.slice(0, 2), special && !reasons.length ? special : '', better].filter(Boolean),
-    notes: [proven[1] ? `Et ${proven[1]}.` : '', general[0] ? `Idée générale : ${general[0]}.` : ''].filter(Boolean),
+    notes: [proven[1] ? `Et ${proven[1]}.` : '', general[0] && general[0] !== effect ? `Idée générale : ${general[0]}.` : ''].filter(Boolean),
     line,
+    key: '',
   };
 }

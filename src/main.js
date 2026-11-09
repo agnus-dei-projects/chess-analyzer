@@ -56,7 +56,7 @@ function parseGame(pgn) {
   };
 }
 
-const state = { game: null, evals: [], report: null, cursor: 0, flipped: false, games: [], selectedUrl: null, username: '' };
+const state = { exCache: new Map(), game: null, evals: [], report: null, cursor: 0, flipped: false, games: [], selectedUrl: null, username: '' };
 const cache = new Map();
 let job = null; // analyse en cours
 
@@ -136,10 +136,16 @@ function explanation(i) {
   const { game, evals, report } = state;
   const move = report && report.moves[i];
   if (!move || move.pending) return null;
+  if (state.exCache.has(i)) return state.exCache.get(i);
+  // On évite de répéter la même formule que le coup précédent du même camp.
+  const previous = i >= 2 ? explanation(i - 2) : null;
+  const avoid = previous ? previous.key : null;
   try {
-    return explainMove({
-      fenBefore: game.fens[i], fenAfter: game.fens[i + 1], ply: game.plies[i], before: evals[i], after: evals[i + 1], move, index: i, prev: game.plies[i - 1],
+    const out = explainMove({
+      fenBefore: game.fens[i], fenAfter: game.fens[i + 1], ply: game.plies[i], before: evals[i], after: evals[i + 1], move, index: i, prev: game.plies[i - 1], avoid,
     });
+    state.exCache.set(i, out);
+    return out;
   } catch (err) {
     console.warn(err);
     return { sentences: [], notes: [], line: '' };
@@ -409,6 +415,7 @@ function renderVoiceToggle() {
 }
 
 function refreshAll() {
+  state.exCache = new Map();
   state.report = state.game ? buildReport(state.game.plies, state.evals, state.game.bookPlies) : null;
   renderStats();
   renderBoard();
