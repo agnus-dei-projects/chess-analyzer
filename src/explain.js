@@ -100,7 +100,7 @@ export function targets(fen, from) {
 const DIRS = { b: [[1, 1], [1, -1], [-1, 1], [-1, -1]], r: [[1, 0], [-1, 0], [0, 1], [0, -1]] };
 DIRS.q = [...DIRS.b, ...DIRS.r];
 
-export function pinBy(fen, from) {
+export function pinBy(fen, from, raw = false) {
   const c = new Chess(fen);
   const me = c.get(from);
   if (!me || !DIRS[me.type]) return null;
@@ -116,6 +116,7 @@ export function pinBy(fen, from) {
       if (!first) { first = { ...p, square: sq }; continue; }
       const blockedPawn = first.type === 'p' && (p.type !== 'k' || df === 0);
       const worthIt = p.type === 'k' || p.type === 'q' || (V[p.type] > V[first.type] && c.attackers(sq, p.color).length === 0);
+      if (raw && first.type !== 'k' && p.type === 'k') return { pinned: first, behind: { ...p, square: sq }, piece: me };
       if (first.type !== 'k' && !blockedPawn && worthIt && (p.type === 'k' || V[p.type] > V[first.type])) return { pinned: first, behind: { ...p, square: sq }, piece: me };
       break;
     }
@@ -309,6 +310,25 @@ function threatFragment(first, threat, mover, score) {
   return null;
 }
 
+// Une prise impossible à cause d'un clouage, rendue possible par le coup : le cœur de la combinaison.
+function unpinMotif(fenBefore, steps, mover) {
+  const third = steps[2];
+  if (!third || third.m.color !== mover || !third.m.captured || V[third.m.captured] < 3 || steps[0].m.to === third.m.from) return null;
+  const c0 = new Chess(fenBefore);
+  if (c0.turn() !== mover || c0.moves({ verbose: true }).some((x) => x.from === third.m.from && x.to === third.m.to)) return null;
+  if (!c0.attackers(third.m.to, mover).includes(third.m.from)) return null;
+  const foe = opp(mover);
+  for (const p of allPieces(fenBefore)) {
+    if (p.color !== foe || !'qrb'.includes(p.type)) continue;
+    const pin = pinBy(fenBefore, p.square, true);
+    if (pin && pin.pinned.square === third.m.from && pin.behind.type === 'k') {
+      const chases = new Chess(steps[0].fen).attackers(p.square, mover).includes(steps[0].m.to);
+      return { chases, pinner: p, pinned: pin.pinned, target: third.m.captured, targetSq: third.m.to, capture: third.m };
+    }
+  }
+  return null;
+}
+
 // Raisons concrètes d'un coup, de la plus forte à la plus faible. Ne décrit jamais le coup lui-même.
 function reasonsFor(ctx) {
   const { fenBefore, steps, mover, moveNumber, mateIn, prev, score, threat, playedRecapture } = ctx;
@@ -329,7 +349,12 @@ function reasonsFor(ctx) {
   const sign = mover === 'w' ? 1 : -1;
   const cp = score.type === 'mate' ? (score.value * sign > 0 ? 1e5 : -1e5) : score.value * sign;
   const realGain = lineDelta(fenBefore, steps, mover) - (recapture ? V[prev.captured] : 0);
-  if (ex.net > 0 && listPieces(ex.won) && cp >= ex.net * 50 && realGain >= 1) {
+  const unpin = realGain >= 1 ? unpinMotif(fenBefore, steps, mover) : null;
+  if (unpin) {
+    const cost = listPieces(ex.lost);
+    out.push(`${unpin.chases ? 'ça chasse' : 'ça libère'} ${unpin.chases ? `${the(unpin.pinner.type, foe)} qui cloue ` : ''}${the(unpin.pinned.type, mover)} en ${tok(unpin.pinned.square)}, et ${the(unpin.target, foe)} en ${tok(unpin.targetSq)} tombe${cost ? `, même si ça coûte ${cost}` : ''}`);
+  }
+  if (ex.net > 0 && listPieces(ex.won) && cp >= ex.net * 50 && realGain >= 1 && !unpin) {
     const lost = listPieces(ex.lost);
     out.push(`ça gagne ${listPieces(ex.won)}${lost ? ` contre ${lost}` : ''}`);
   }
@@ -483,6 +508,45 @@ function purposes({ fenBefore, steps, mover, prev }) {
   return out;
 }
 
+// Explication détaillée, écrite seulement : chaque ligne vient de la variante du moteur.
+function stepLine(s, prevStep) {
+  const m = s.m;
+  const parts = [];
+  if (m.san.startsWith('O-O')) parts.push('roque');
+  if (m.promotion) parts.push(`promotion en ${NAME[m.promotion]}`);
+  if (m.captured) parts.push(prevStep && prevStep.m.captured && prevStep.m.to === m.to ? `reprend ${the(m.captured, opp(m.color))}` : `prend ${the(m.captured, opp(m.color))}`);
+  if (m.san.endsWith('#')) parts.push('échec et mat');
+  else if (m.san.endsWith('+')) parts.push('échec');
+  else if (!m.captured) {
+    const hit = targets(s.fen, m.to).filter((t) => t.type !== 'k' && V[t.type] >= 3)[0];
+    if (hit) parts.push(`attaque ${the(hit.type, hit.color)}`);
+  }
+  return `${m.color === 'w' ? 'Blancs' : 'Noirs'} ${tok(m.san)}${parts.length ? ` : ${parts.join(', ')}` : ''}`;
+}
+
+function lineBlock(title, steps, mover, startFen, n = 6) {
+  const shown = steps.slice(0, n);
+  const lines = shown.map((s, i) => stepLine(s, shown[i - 1]));
+  const won = {}; const lost = {};
+  shown.forEach((s) => { if (s.m.captured) { const bag = s.m.color === mover ? won : lost; bag[s.m.captured] = (bag[s.m.captured] || 0) + 1; } });
+  Object.keys(won).forEach((p) => { const k = Math.min(won[p], lost[p] || 0); won[p] -= k; if (lost[p]) lost[p] -= k; });
+  const a = listPieces(won); const b = listPieces(lost);
+  const tally = a || b ? `Bilan pour ${side(mover)} : ${a ? `+ ${a}` : ''}${a && b ? ', ' : ''}${b ? `− ${b}` : ''}.` : 'Pas de changement de matériel sur cette suite.';
+  return { title, lines, tally };
+}
+
+function buildDetails({ fenBefore, fenAfter, mover, ply, bestSteps, playedLine, before, after, played }) {
+  const unpin = bestSteps.length ? unpinMotif(fenBefore, bestSteps, mover) : null;
+  const key = unpin
+    ? `La clé : ${the(unpin.pinned.type, mover)} en ${tok(unpin.pinned.square)} est cloué${FEM[unpin.pinned.type] ? 'e' : ''} devant le roi par ${the(unpin.pinner.type, opp(mover))} en ${tok(unpin.pinner.square)}. La prise ${tok(unpin.capture.san)} est donc impossible tant que ${FEM[unpin.pinner.type] ? 'celle-ci' : 'celui-ci'} reste sur cette ligne.`
+    : '';
+  const blocks = [];
+  if (bestSteps.length) blocks.push(lineBlock(played ? 'La suite calculée' : 'Avec le coup conseillé', bestSteps, mover, fenBefore));
+  if (!played) blocks.push(lineBlock('Avec le coup joué', playedLine, mover, fenBefore));
+  const compare = played ? `Évaluation : ${evalWords(after.score)}.` : `Après le coup conseillé : ${evalWords(before.score)}. Après le coup joué : ${evalWords(after.score)}.`;
+  return { key, blocks, compare };
+}
+
 const keyOf = (t) => t.split(' ').slice(0, 2).join(' ');
 const pick = (list, avoid) => list.find((t) => keyOf(t) !== avoid) || list[0] || '';
 
@@ -529,7 +593,8 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
     const why = reasonsFor({ fenBefore, steps: playedLine, mover, moveNumber, mateIn: mateFor(before.score), prev, score: before.score, threat: before.threat, playedRecapture: true });
     const strong = why.find((t) => STRONG.test(t));
     const chosen = strong || pick(describe(why), avoid);
-    return { sentences: [special, chosen ? sentence(chosen) : ''].filter(Boolean), notes: [], line: lineOf(playedLine.slice(1), 4), key: keyOf(chosen || '') };
+    const details = ['brilliant', 'great'].includes(move.kind) ? buildDetails({ fenBefore, fenAfter, mover, ply, bestSteps: playedLine, playedLine, before, after, played: true }) : null;
+    return { sentences: [special, chosen ? sentence(chosen) : ''].filter(Boolean), notes: [], line: lineOf(playedLine.slice(1), 4), key: keyOf(chosen || ''), details };
   }
 
   const neg = negative({ fenBefore, fenAfter, ply, after, mover });
@@ -565,5 +630,6 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
     notes: [proven[1] ? `Et ${proven[1]}.` : '', general[0] && general[0] !== effect ? `Idée générale : ${general[0]}.` : ''].filter(Boolean),
     line,
     key: '',
+    details: buildDetails({ fenBefore, fenAfter, mover, ply, bestSteps, playedLine, before, after, played: false }),
   };
 }

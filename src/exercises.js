@@ -39,10 +39,11 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
   const pool = createPool(store);
   let cg = null;
   let session = 0;
+  let cancelPromo = null;
   let engine = null;
   let stats = { streak: 0 };
   const P = {}; // état de l'exercice courant
-  if (__AUDIT__) { window.__P = P; window.__fx = fx; }
+  if (__AUDIT__) { window.__P = P; window.__fx = fx; window.__redraw = () => setBoard(P.c, P.orient, null, true, onSituationMove); }
 
   const msg = (text, tone = '') => { const m = $('t-msg'); m.textContent = text; m.dataset.tone = tone; };
   const actions = (list) => {
@@ -65,6 +66,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     return cg;
   }
   function setBoard(c, orientation, last, canMove, after) {
+    if (cancelPromo) cancelPromo();
     board().set({
       fen: c.fen(), orientation, turnColor: colorName(c.turn()), check: c.inCheck() ? colorName(c.turn()) : false,
       lastMove: last ? [last.slice(0, 2), last.slice(2, 4)] : undefined,
@@ -292,11 +294,35 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     return null;
   }
 
+  // Choix de la pièce, posé sur la colonne de promotion. Toucher à côté annule le coup.
+  function choosePromotion(dest, color) {
+    return new Promise((resolve) => {
+      const wrap = $('tboard');
+      const col = P.orient === 'white' ? dest.charCodeAt(0) - 97 : 7 - (dest.charCodeAt(0) - 97);
+      const done = (v) => { cancelPromo = null; layer.remove(); resolve(v); };
+      cancelPromo = () => done(null);
+      const layer = h('div', { class: 'promo-layer', onpointerdown: (e) => { if (e.target === layer) done(null); } });
+      const stack = h('div', { class: 'promo', style: `left:${col * 12.5}%` });
+      [['q', 'queen', 'Dame'], ['r', 'rook', 'Tour'], ['b', 'bishop', 'Fou'], ['n', 'knight', 'Cavalier']].forEach(([l, name, label]) => {
+        stack.append(h('button', { type: 'button', 'aria-label': label, onclick: () => done(l) }, h('piece', { class: `${name} ${color === 'w' ? 'white' : 'black'}` })));
+      });
+      layer.append(stack);
+      wrap.append(layer);
+    });
+  }
+
   async function onSituationMove(orig, dest) {
     if (P.done || P.thinking) return;
     const my = P.my;
     const piece = P.c.get(orig);
-    const promo = piece && piece.type === 'p' && (dest[1] === '8' || dest[1] === '1') ? 'q' : undefined;
+    let promo;
+    if (piece && piece.type === 'p' && (dest[1] === '8' || dest[1] === '1')) {
+      P.thinking = true;
+      promo = await choosePromotion(dest, piece.color);
+      if (my !== session || P.done) return;
+      P.thinking = false;
+      if (!promo) { setBoard(P.c, P.orient, P.lastPlayed, true, onSituationMove); return; }
+    }
     moveFx(P.c.move({ from: orig, to: dest, promotion: promo }), P.c, false);
     P.ply += 1;
     P.lastPlayed = orig + dest + (promo || '');
@@ -392,6 +418,6 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     renderHub,
     titleOf: (id) => (SITUATIONS.find((s) => s.id === id) || {}).title || 'Mise en situation',
     open(id) { if (id === 'puzzle') nextPuzzle(); else startSituation(id); },
-    close() { session += 1; },
+    close() { session += 1; if (cancelPromo) cancelPromo(); },
   };
 }

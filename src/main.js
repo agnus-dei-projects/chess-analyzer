@@ -186,6 +186,17 @@ function renderVerdict() {
   ex.sentences.forEach((t) => body.append(h('p', { class: 'v-text' }, display(t))));
   if (!ex.sentences.length) body.append(h('p', { class: 'v-silent' }, 'Coup sans commentaire'));
   (ex.notes || []).forEach((t) => body.append(h('p', { class: 'v-note' }, display(t))));
+  if (ex.details) {
+    const more = h('details', { class: 'v-more' }, h('summary', {}, 'Comprendre ce coup'));
+    if (ex.details.key) more.append(h('p', { class: 'v-key' }, display(ex.details.key)));
+    ex.details.blocks.forEach((b) => {
+      more.append(h('p', { class: 'v-blk' }, b.title));
+      more.append(h('ol', { class: 'v-steps' }, ...b.lines.map((l) => h('li', {}, display(l)))));
+      more.append(h('p', { class: 'v-tally' }, b.tally));
+    });
+    more.append(h('p', { class: 'v-tally' }, ex.details.compare));
+    body.append(more);
+  }
   if (ex.line) body.append(h('p', { class: 'v-line' }, 'Suite prévue : ', display(ex.line)));
   if (state.variation && state.variation.ended && cursor === game.plies.length) body.append(h('p', { class: 'v-text' }, h('strong', {}, state.variation.ended)));
   box.append(body);
