@@ -1,27 +1,24 @@
 import { MATE_CP, parseInfo } from './analysis.js';
 
-function engineUrl() {
-  const b64 = document.getElementById('sf-wasm').textContent.trim();
-  const js = atob(document.getElementById('sf-js').textContent.trim());
-  // Le moteur réclame son .wasm par fetch : on le lui sert depuis la page,
-  // ce qui permet d'ouvrir le fichier sans serveur.
-  const prelude = `(function(){var s=atob("${b64}"),u=new Uint8Array(s.length);`
-    + 'for(var i=0;i<s.length;i++)u[i]=s.charCodeAt(i);'
-    + 'self.fetch=function(){return Promise.resolve(new Response(u,{headers:{"Content-Type":"application/wasm"}}));};})();\n';
-  return URL.createObjectURL(new Blob([prelude, js], { type: 'text/javascript' }));
-}
+// Stockfish (version à un seul fil) est servi en fichiers à part, mis en cache par le service worker :
+// la page reste légère et le navigateur garde le code compilé d'une ouverture à l'autre.
+// Le multi-fil de Stockfish a été écarté : à profondeur fixe, il double le calcul sans finir plus tôt.
+const URL_SF = new URL('sf/stockfish-19-lite-single.js', location.href).href;
 
-let workerUrl = null;
+// Nombre de moteurs pour analyser une partie : chacun prend des positions différentes.
+// Même quantité de calcul au total, terminée plus vite sur un téléphone à plusieurs cœurs.
+export const POOL_SIZE = Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 2) - 2));
 
 export class Engine {
-  constructor() {
-    workerUrl = workerUrl || engineUrl();
-    this.worker = new Worker(workerUrl);
+  constructor(hash = 32) {
+    this.hash = hash;
+    this.worker = new Worker(URL_SF);
     this.waiting = null;
     this.last = null;
     this.failed = new Promise((_, reject) => {
       this.worker.onerror = (e) => reject(new Error(e.message || 'moteur indisponible'));
     });
+    this.failed.catch(() => {});
     this.worker.onmessage = (e) => this.onLine(String(e.data));
   }
 
@@ -37,8 +34,9 @@ export class Engine {
   }
 
   send(cmd, until) {
+    if (this.stopped) return Promise.reject(new Error('moteur arrêté'));
     const done = until
-      ? new Promise((resolve) => { this.waiting = { test: (l) => l.startsWith(until), resolve }; })
+      ? new Promise((resolve, reject) => { this.waiting = { test: (l) => l.startsWith(until), resolve, reject }; })
       : null;
     this.worker.postMessage(cmd);
     return done ? Promise.race([done, this.failed]) : Promise.resolve();
@@ -46,7 +44,7 @@ export class Engine {
 
   async init() {
     await this.send('uci', 'uciok');
-    await this.send('setoption name Hash value 32');
+    await this.send(`setoption name Hash value ${this.hash}`);
     await this.send('ucinewgame');
     await this.send('isready', 'readyok');
   }
@@ -71,6 +69,10 @@ export class Engine {
     return found.map((i) => ({ uci: i.pv[0], cp: i.type === 'cp' ? i.value : (i.value > 0 ? MATE_CP : -MATE_CP) }));
   }
 
-  stop() { this.worker.terminate(); }
+  // Arrête le calcul et libère la mémoire ; une attente en cours échoue au lieu de rester bloquée.
+  stop() {
+    this.stopped = true;
+    this.worker.terminate();
+    if (this.waiting) { const { reject } = this.waiting; this.waiting = null; reject(new Error('moteur arrêté')); }
+  }
 }
-

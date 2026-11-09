@@ -3,7 +3,7 @@ import { Chessground } from 'chessground';
 import {
   buildReport, formatScore, GLYPHS, KINDS, LABELS, MATE_CP, parseInfo, pickHuman, scoreToCp, toWhiteScore, winPct, FAIR_RESULTS,
 } from './analysis.js';
-import { Engine } from './engine.js';
+import { Engine, POOL_SIZE } from './engine.js';
 import { createTrainer } from './exercises.js';
 import { createFx } from './fx.js';
 import { bookFromEcoUrl, explainMove, isSacrifice, sanToSpeech } from './explain.js';
@@ -202,11 +202,15 @@ function renderVerdict() {
   box.append(body);
 }
 
+let movesSig = '';
 function renderMoves() {
   const { game, report, cursor } = state;
   const list = $('moves');
-  const top = list.scrollTop;
   const strip = $('strip');
+  const sig = game ? `${game.plies.length}|${state.variation ? state.variation.base : -1}|${report ? report.moves.map((x) => (x.pending ? '' : x.kind)).join(',') : ''}` : '';
+  if (game && sig === movesSig) { markCursor(list, strip, cursor); return; }
+  movesSig = sig;
+  const top = list.scrollTop;
   list.replaceChildren();
   strip.replaceChildren();
   if (!game) return;
@@ -216,17 +220,28 @@ function renderMoves() {
     const m = report ? report.moves[i] : null;
     const kind = m && !m.pending ? m.kind : '';
     strip.append(h('button', {
-      type: 'button', class: `chip${cursor === i + 1 ? ' on' : ''}${inVariation(i) ? ' var' : ''}`, onclick: () => go(i + 1, true),
+      type: 'button', class: `chip${inVariation(i) ? ' var' : ''}`, 'data-i': i + 1, onclick: () => go(i + 1, true),
     }, i % 2 === 0 ? h('span', { class: 'num' }, `${moveNo(i)}.`) : null, fig(p.san), kind ? h('span', { class: 'mark tiny', 'data-kind': kind }, GLYPHS[kind]) : null));
     list.append(h('button', {
-      type: 'button', class: `mv${cursor === i + 1 ? ' on' : ''}${inVariation(i) ? ' var' : ''}`, 'data-kind': kind || null, onclick: () => go(i + 1, true),
+      type: 'button', class: `mv${inVariation(i) ? ' var' : ''}`, 'data-i': i + 1, 'data-kind': kind || null, onclick: () => go(i + 1, true),
       'aria-label': `${moveLabel(i, p.san)}${kind ? ` : ${LABELS[kind]}` : ''}`,
     }, fig(p.san), kind ? h('span', { class: 'mark tiny', 'data-kind': kind, 'aria-hidden': 'true' }, GLYPHS[kind]) : null));
   });
-  const onChip = strip.querySelector('.on');
-  if (onChip) strip.scrollLeft = onChip.offsetLeft - strip.offsetLeft - strip.clientWidth / 2 + onChip.offsetWidth / 2;
   list.scrollTop = top;
-  const on = list.querySelector('.on');
+  markCursor(list, strip, cursor);
+}
+
+// Déplace seulement la surbrillance du coup courant, sans reconstruire les listes.
+function markCursor(list, strip, cursor) {
+  [list, strip].forEach((box) => {
+    const was = box.querySelector('.on');
+    if (was && +was.dataset.i !== cursor) was.classList.remove('on');
+    const el = cursor > 0 ? box.querySelector(`[data-i="${cursor}"]`) : null;
+    if (el) el.classList.add('on');
+  });
+  const onChip = strip.querySelector('.on');
+  if (onChip && strip.offsetParent) strip.scrollLeft = onChip.offsetLeft - strip.offsetLeft - strip.clientWidth / 2 + onChip.offsetWidth / 2;
+  const on = list.offsetParent ? list.querySelector('.on') : null;
   if (on) {
     const a = on.offsetTop - list.offsetTop;
     if (a < list.scrollTop) list.scrollTop = a - 8;
@@ -292,7 +307,7 @@ function renderChart() {
     svg.append(s('path', { d: `M${pts[0][0]},${y(0)} L${line} L${pts[pts.length - 1][0]},${y(0)} Z`, class: 'c-area' }));
     svg.append(s('path', { d: `M${line}`, class: 'c-line' }));
   }
-  svg.append(s('line', { x1: x(cursor), x2: x(cursor), y1: PAD.t, y2: H - PAD.b, class: 'c-cursor' }));
+  svg.append(s('line', { x1: x(cursor), x2: x(cursor), y1: PAD.t, y2: H - PAD.b, class: 'c-cursor', id: 'c-cursor' }));
   if (report) {
     const R = { inaccuracy: 4, mistake: 4.5, miss: 4.5, blunder: 5.5 };
     report.moves.forEach((m, i) => {
@@ -300,6 +315,13 @@ function renderChart() {
       svg.append(s('circle', { cx: x(i + 1), cy: y(winPct(scoreToCp(evals[i + 1].score))), r: R[m.kind], class: `c-pt ${m.kind}` }));
     });
   }
+}
+
+function moveChartCursor() {
+  const line = $('c-cursor');
+  if (!line || !state.game) { renderChart(); return; }
+  const px = chartScale().x(state.cursor);
+  line.setAttribute('x1', px); line.setAttribute('x2', px);
 }
 
 function chartHover(e) {
@@ -330,7 +352,7 @@ function go(i, fromUser) {
   state.cursor = next;
   renderBoard();
   renderMoves();
-  renderChart();
+  moveChartCursor();
   if (fromUser && stepped) playedFx(next - 1);
   if (fromUser && moved) {
     if (voice.auto) speakCurrent(); else voice.stop();
@@ -434,13 +456,45 @@ function renderVoiceToggle() {
   b.textContent = voice.auto ? 'Voix : oui' : 'Voix : non';
 }
 
+// Une explication dépend des évaluations autour du coup et de la précédente du même camp :
+// quand l'évaluation n° k change, seules les explications à partir du coup k − 1 sont à refaire.
+function forgetFrom(k) {
+  for (const i of [...state.exCache.keys()]) if (i >= k - 1) state.exCache.delete(i);
+}
+
+// Pendant l'analyse, un seul rendu par quart de seconde, et aucun quand l'écran est caché.
+let redrawSoon = false;
+function refreshFrom(k) {
+  forgetFrom(k);
+  if (redrawSoon) return;
+  redrawSoon = true;
+  setTimeout(() => requestAnimationFrame(() => { redrawSoon = false; redraw(); }), 250);
+}
+
 function refreshAll() {
   state.exCache = new Map();
+  redraw();
+}
+
+function redraw() {
   state.report = state.game ? buildReport(state.game.plies, state.evals, state.game.bookPlies) : null;
   renderStats();
   renderBoard();
   renderMoves();
   renderChart();
+}
+
+// Prépare les explications pendant les temps morts : sauter loin dans la partie reste instantané.
+const idle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 1500 }) : setTimeout(() => fn(null), 40));
+function warmExplanations() {
+  const g = state.game;
+  let i = 0;
+  const step = (dl) => {
+    if (state.game !== g || job || state.variation) return;
+    do { explanation(i); i += 1; } while (i < g.plies.length && (dl ? dl.timeRemaining() > 6 : i % 3));
+    if (i < g.plies.length) idle(step);
+  };
+  idle(step);
 }
 
 /* ---------- Analyse ---------- */
@@ -458,8 +512,24 @@ function terminalScore(game) {
 }
 
 function stopJob() {
-  if (job) { job.engine.stop(); job.cancelled = true; job = null; }
+  if (job) { job.cancelled = true; job.engines.forEach((e) => e.stop()); job = null; }
   $('progress').hidden = true;
+}
+
+// Répartit des positions entre les moteurs, par blocs de positions voisines :
+// chaque moteur réutilise ce qu'il vient de calculer sur la position précédente.
+async function share(engines, items, block, me, work) {
+  let next = 0;
+  await Promise.all(engines.map(async (engine) => {
+    while (next < items.length && !me.cancelled) {
+      const start = next;
+      next += block;
+      for (const item of items.slice(start, start + block)) {
+        if (me.cancelled) return;
+        await work(engine, item);
+      }
+    }
+  }));
 }
 
 async function analyze(game, key) {
@@ -470,21 +540,29 @@ async function analyze(game, key) {
     state.evals = cache.get(cacheKey);
     setStatus(`Analyse à la profondeur ${depth}, déjà calculée.`);
     refreshAll();
+    warmExplanations();
     return;
   }
-  const engine = new Engine();
-  const me = { engine, cancelled: false };
+  const n = game.fens.length;
+  const count = Math.max(1, Math.min(POOL_SIZE, Math.floor(n / 16)));
+  const engines = Array.from({ length: count }, () => new Engine());
+  const me = { engines, cancelled: false };
   job = me;
   state.evals = [];
   $('progress').hidden = false;
   $('bar-fill').style.width = '0%';
   refreshAll();
-  const n = game.fens.length;
   const t0 = performance.now();
   try {
-    await engine.init();
-    for (let i = 0; i < n; i += 1) {
-      if (me.cancelled) return;
+    await Promise.all(engines.map((e) => e.init()));
+    let done = 0;
+    // Chaque moteur prend une portion continue de la partie et calcule d'abord la position
+    // qui la précède : il démarre avec la même mémoire qu'un moteur unique arrivé là.
+    const span = Math.ceil(n / count);
+    await Promise.all(engines.map(async (engine, k) => {
+      if (k > 0) await engine.evaluate(game.fens[k * span - 1], depth);
+    }));
+    await share(engines, [...Array(n).keys()], span, me, async (engine, i) => {
       const white = game.fens[i].split(' ')[1] === 'w';
       const end = i === n - 1 ? terminalScore(game) : null;
       let ev;
@@ -495,27 +573,28 @@ async function analyze(game, key) {
         ev = { score: toWhiteScore(r.score, white), best: r.best, pv: r.pv };
       }
       state.evals[i] = ev;
-      $('bar-fill').style.width = `${((i + 1) / n) * 100}%`;
-      $('progress-text').textContent = `Analyse : position ${i + 1} sur ${n}`;
-      refreshAll();
-    }
-    await refine(game, engine, depth, me);
+      done += 1;
+      $('bar-fill').style.width = `${(done / n) * 100}%`;
+      $('progress-text').textContent = `Analyse : position ${done} sur ${n}`;
+      refreshFrom(i);
+    });
     if (me.cancelled) return;
-    await findAlternatives(game, engine, depth, me);
+    await refine(game, engines[0], depth, me);
+    if (me.cancelled) return;
+    await findAlternatives(game, engines, depth, me);
     if (me.cancelled) return;
     $('progress-text').textContent = 'Recherche des raisons de chaque coup…';
-    for (let i = game.bookPlies; i < game.plies.length; i += 1) {
-      if (game.plies[i].legal < 2) continue;
-      await computeThreat(engine, game.fens[i], state.evals[i]);
-      if (me.cancelled) return;
-    }
+    const todo = [];
+    for (let i = game.bookPlies; i < game.plies.length; i += 1) if (game.plies[i].legal >= 2) todo.push(i);
+    await share(engines, todo, 4, me, (engine, i) => computeThreat(engine, game.fens[i], state.evals[i]));
+    if (me.cancelled) return;
     cache.set(cacheKey, state.evals);
-    window.__lastAnalysis = { evals: state.evals, ms: performance.now() - t0 };
+    window.__lastAnalysis = { evals: state.evals, ms: performance.now() - t0, engines: count };
     setStatus(`Analyse terminée à la profondeur ${depth} en ${Math.round((performance.now() - t0) / 1000)} s.`);
   } catch (err) {
     if (!me.cancelled) setStatus(`Le moteur n’a pas pu démarrer (${err.message}). Recharge la page, puis réessaie.`, true);
   } finally {
-    if (job === me) { job = null; $('progress').hidden = true; engine.stop(); refreshAll(); }
+    if (job === me) { job = null; $('progress').hidden = true; engines.forEach((e) => e.stop()); refreshAll(); warmExplanations(); }
   }
 }
 
@@ -556,19 +635,24 @@ async function computeThreat(engine, fen, ev) {
 }
 
 // Évalue le meilleur coup autre que celui joué : critère des coups brillants et décisifs.
-async function findAlternatives(game, engine, depth, me) {
+async function findAlternatives(game, engines, depth, me) {
   const report = buildReport(game.plies, state.evals, game.bookPlies);
   $('progress-text').textContent = 'Recherche des coups brillants et décisifs…';
+  const todo = [];
   for (let i = 0; i < game.plies.length; i += 1) {
     const ply = game.plies[i];
     const m = report.moves[i];
     if (m.pending || m.kind === 'book' || ply.legal < 2 || m.loss >= 2) continue;
     if (!ply.sacrifice && (ply.recapture || m.moverAfter < 40)) continue;
+    todo.push(i);
+  }
+  await share(engines, todo, 4, me, async (engine, i) => {
+    const ply = game.plies[i];
     const others = new Chess(game.fens[i]).moves({ verbose: true }).map((x) => x.from + x.to + (x.promotion || '')).filter((u) => u !== ply.uci);
     const r = await engine.evaluate(game.fens[i], depth, others);
     if (me.cancelled) return;
     state.evals[i].second = toWhiteScore(r.score, ply.color === 'w');
-  }
+  });
 }
 
 /* ---------- Reprise : toi plus fort, l'adversaire à son Elo ---------- */
@@ -627,6 +711,7 @@ function startVariation() {
     myElo: level === 'max' ? null : rating(me) + +level,
     myRating: rating(me), loadPct: 0, maiaFailed: false,
     mainReport: buildReport(g.plies, main.evals, g.bookPlies),
+    mainEx: new Map(state.exCache),
   };
   state.variation = v;
   state.game = { ...g, fens: g.fens.slice(0, base + 1), plies: g.plies.slice(0, base), bookPlies: Math.min(g.bookPlies, base) };
@@ -635,7 +720,8 @@ function startVariation() {
   v.ready.then(() => { if (v.active) renderGuide(); }).catch(() => {});
   v.pending = prepareNext(v);
   v.pending.catch(() => {});
-  refreshAll();
+  forgetFrom(base);
+  redraw();
 }
 
 // Calcule à l'avance le coup suivant : la touche › répond alors tout de suite.
@@ -694,7 +780,8 @@ async function advanceVariation() {
     v.ended = next.ended;
     v.busy = false;
     state.cursor = state.game.plies.length;
-    refreshAll();
+    forgetFrom(state.cursor);
+    redraw();
     playedFx(state.cursor - 1);
     if (voice.auto) speakCurrent(); else voice.stop();
     if (v.ended) v.engine.stop();
@@ -719,8 +806,9 @@ function exitVariation() {
   state.game = v.main.game;
   state.evals = v.main.evals;
   state.cursor = v.main.cursor;
+  state.exCache = v.mainEx;
   voice.stop();
-  refreshAll();
+  redraw();
 }
 
 function renderGuide() {

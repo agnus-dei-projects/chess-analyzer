@@ -80,8 +80,14 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
 
   /* ---------- Problèmes ---------- */
 
+  let starting = null;
   async function ensureEngine() {
-    if (!engine) { engine = new Engine(); await engine.init(); }
+    if (!engine) {
+      const e = new Engine();
+      engine = e;
+      starting = e.init();
+    }
+    await starting;
     return engine;
   }
 
@@ -273,7 +279,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     try {
       msg('Chargement de l’adversaire…');
       await ensureMaia((pct) => { if (my === session) msg(`Chargement de l’adversaire : ${pct} %`); });
-      if (!engine) { engine = new Engine(); await engine.init(); }
+      await ensureEngine();
     } catch {
       if (my === session) { msg('Impossible de charger l’adversaire. Vérifie ta connexion, puis réessaie.', 'bad'); actions([['Réessayer', () => startSituation(id), true]]); }
       return;
@@ -336,14 +342,15 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     let reply;
     try { reply = await (await ensureMaia(() => {})).move(P.c.fen(), elo, elo, 1); } catch { reply = null; }
     if (my !== session) return;
-    if (!reply) { const r = await engine.evaluate(P.c.fen(), 8); reply = r.best; if (my !== session) return; }
+    if (!reply) { try { reply = (await engine.evaluate(P.c.fen(), 8)).best; } catch { return; } if (my !== session) return; }
     moveFx(P.c.move(parse(reply)), P.c);
     P.ply += 1;
     P.lastPlayed = reply;
     end = gameEnd(P.c);
     if (end) { setBoard(P.c, P.orient, reply, false); endSituation(end[0], end[1]); return; }
     setBoard(P.c, P.orient, reply, false);
-    const ev = await evalFor(P.c.fen(), P.user);
+    let ev;
+    try { ev = await evalFor(P.c.fen(), P.user); } catch { return; }
     if (my !== session) return;
     const d = P.def;
     if (ev >= d.winAt) { endSituation(1, 'Position gagnante atteinte, objectif rempli.'); return; }
@@ -418,6 +425,10 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     renderHub,
     titleOf: (id) => (SITUATIONS.find((s) => s.id === id) || {}).title || 'Mise en situation',
     open(id) { if (id === 'puzzle') nextPuzzle(); else startSituation(id); },
-    close() { session += 1; if (cancelPromo) cancelPromo(); },
+    close() {
+      session += 1;
+      if (cancelPromo) cancelPromo();
+      if (engine) { engine.stop(); engine = null; }
+    },
   };
 }

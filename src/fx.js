@@ -58,7 +58,7 @@ export function schedule(kind, ctx, out, noise, t) {
 }
 
 export function createFx(store) {
-  let ctx = null; let noise = null; let master = null;
+  let ctx = null; let noise = null; let master = null; let sleepTimer = 0;
   const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const enabled = () => store.get('sound') !== 'off';
 
@@ -76,12 +76,20 @@ export function createFx(store) {
     if (ctx.state !== 'running') ctx.resume().catch(() => {});
     return true;
   }
-  // Les navigateurs mobiles n'autorisent le son qu'après un geste : on déverrouille à chaque toucher.
-  document.addEventListener('pointerdown', () => { if (enabled()) ensure(); }, { passive: true });
+  // Une sortie audio ouverte garde le circuit son du téléphone éveillé : on la met en veille
+  // 3 s après le dernier son, et on la réveille au coup suivant.
+  function sleepLater() {
+    clearTimeout(sleepTimer);
+    sleepTimer = setTimeout(() => { if (ctx && ctx.state === 'running') ctx.suspend().catch(() => {}); }, 3000);
+  }
+  // Les navigateurs mobiles n'autorisent le son qu'après un geste : le premier toucher le déverrouille.
+  document.addEventListener('pointerdown', () => { if (enabled() && (!ctx || ctx.state !== 'running')) { ensure(); sleepLater(); } }, { passive: true });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && ctx && ctx.state === 'running') ctx.suspend().catch(() => {}); });
 
   function sound(kind, delay) {
     if (!enabled() || !ensure()) return;
     schedule(kind, ctx, master, noise, ctx.currentTime + delay / 1000 + 0.005);
+    sleepLater();
   }
 
   function burst(el, square, orientation, cls, delay) {
