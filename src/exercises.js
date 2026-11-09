@@ -16,8 +16,7 @@ export const SITUATIONS = [
 
 const THEMES = { mate: 'Mat', mateIn1: 'Mat en 1', mateIn2: 'Mat en 2', mateIn3: 'Mat en 3', mateIn4: 'Mat en 4', fork: 'Fourchette', pin: 'Clouage', skewer: 'Enfilade', sacrifice: 'Sacrifice', discoveredAttack: 'Attaque à la découverte', deflection: 'Déviation', attraction: 'Attraction', hangingPiece: 'Pièce en prise', trappedPiece: 'Pièce piégée', backRankMate: 'Mat du couloir', promotion: 'Promotion', endgame: 'Finale', opening: 'Ouverture', middlegame: 'Milieu de partie', kingsideAttack: 'Attaque sur le roque', defensiveMove: 'Coup défensif', quietMove: 'Coup tranquille' };
 
-const START = 1200;
-const PUZZLE_START = 800;
+const START = 800;
 const SK = (id) => `elo-${id}`;
 const parse = (u) => ({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] });
 const pause = (ms) => new Promise((r) => { setTimeout(r, ms); });
@@ -31,11 +30,11 @@ const colorName = (t) => (t === 'w' ? 'white' : 'black');
 
 export function createTrainer({ h, store, Engine, ensureMaia, openGame, username, display, say, hush }) {
   const $ = (id) => document.getElementById(id);
-  const startOf = (id) => (id === 'puzzle' ? PUZZLE_START : START);
-  const getElo = (id) => { try { return JSON.parse(store.get(SK(id))) || { r: startOf(id), n: 0 }; } catch { return { r: startOf(id), n: 0 }; } };
+  const getElo = (id) => { try { return JSON.parse(store.get(SK(id))) || { r: START, n: 0 }; } catch { return { r: START, n: 0 }; } };
   const setElo = (id, v) => store.set(SK(id), JSON.stringify(v));
   // Les problèmes démarrent désormais à 800 : remise à niveau unique des anciens profils.
-  if (!store.get('puzzle-start-800')) { store.set(SK('puzzle'), JSON.stringify({ r: PUZZLE_START, n: 0 })); store.set('puzzle-start-800', '1'); }
+  if (!store.get('puzzle-start-800')) { store.set(SK('puzzle'), JSON.stringify({ r: START, n: 0 })); store.set('puzzle-start-800', '1'); }
+  if (!store.get('situations-start-800')) { SITUATIONS.forEach((s) => store.set(SK(s.id), JSON.stringify({ r: START, n: 0 }))); store.set('situations-start-800', '1'); }
   const readJson = (k) => { try { return JSON.parse(store.get(k)); } catch { return null; } };
   const pool = createPool(store);
   let cg = null;
@@ -380,7 +379,6 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     const box = $('hub-sits');
     if (!box) return;
     $('hub-puzzle-elo').textContent = getElo('puzzle').r;
-    $('home-puzzle-elo').textContent = getElo('puzzle').r;
     box.replaceChildren(...SITUATIONS.map((s) => h('a', { class: 'tile', href: `#situation-${s.id}` },
       h('span', { class: 'tile-ic', 'aria-hidden': 'true' }, s.icon),
       h('span', { class: 'tile-main' }, h('strong', {}, s.title), h('small', {}, s.blurb)),
