@@ -427,6 +427,26 @@ export function bookFromEcoUrl(url, plies) {
 
 const sentence = (t) => `${t[0].toUpperCase()}${t.slice(1)}.`;
 
+// Pourquoi un coup proposé dans un problème est refusé, sans dévoiler la solution.
+export function explainWrongMove({ fenBefore, fenAfter, ply, after, themes }) {
+  const mover = ply.color;
+  const neg = negative({ fenBefore, fenAfter, ply, after, mover });
+  const out = neg.out.slice(0, 2);
+  const sign = mover === 'w' ? 1 : -1;
+  const cp = after.score.type === 'mate' ? (after.score.value * sign > 0 ? 3000 : -3000) : after.score.value * sign;
+  if (!out.length && neg.r) {
+    out.push(`L’adversaire répond ${tok(neg.r.m.san)}.`);
+    if (cp < -100) out.push('Ta position devient mauvaise.');
+    else if (cp < 100) out.push('Ton avantage disparaît : la position redevient équilibrée.');
+    else out.push('Ce coup reste jouable, mais il laisse passer bien plus fort.');
+  }
+  const t = themes || [];
+  if (t.some((x) => x.startsWith('mate'))) out.push('Il y a un mat à trouver.');
+  else if (t.includes('equality')) out.push('Il faut trouver le coup qui sauve la partie.');
+  else out.push('Un autre coup donne un avantage décisif.');
+  return { sentences: out, refutation: neg.r ? neg.r.m.from + neg.r.m.to : null };
+}
+
 /**
  * Renvoie { sentences, spoken, line }.
  * La cause vient d'abord. Le coup conseillé et sa raison tiennent en une seule phrase.

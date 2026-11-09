@@ -3,6 +3,7 @@ import { Chess } from 'chess.js';
 import { Chessground } from 'chessground';
 import { createPool, updateElo } from './puzzles.js';
 import { toWhiteScore } from './analysis.js';
+import { explainWrongMove } from './explain.js';
 import POSITIONS from './situations.json';
 
 export const SITUATIONS = [
@@ -16,6 +17,7 @@ export const SITUATIONS = [
 const THEMES = { mate: 'Mat', mateIn1: 'Mat en 1', mateIn2: 'Mat en 2', mateIn3: 'Mat en 3', mateIn4: 'Mat en 4', fork: 'Fourchette', pin: 'Clouage', skewer: 'Enfilade', sacrifice: 'Sacrifice', discoveredAttack: 'Attaque à la découverte', deflection: 'Déviation', attraction: 'Attraction', hangingPiece: 'Pièce en prise', trappedPiece: 'Pièce piégée', backRankMate: 'Mat du couloir', promotion: 'Promotion', endgame: 'Finale', opening: 'Ouverture', middlegame: 'Milieu de partie', kingsideAttack: 'Attaque sur le roque', defensiveMove: 'Coup défensif', quietMove: 'Coup tranquille' };
 
 const START = 1200;
+const PUZZLE_START = 800;
 const SK = (id) => `elo-${id}`;
 const parse = (u) => ({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] });
 const pause = (ms) => new Promise((r) => { setTimeout(r, ms); });
@@ -27,10 +29,14 @@ function destsOf(c) {
 }
 const colorName = (t) => (t === 'w' ? 'white' : 'black');
 
-export function createTrainer({ h, store, Engine, ensureMaia, openGame, username }) {
+export function createTrainer({ h, store, Engine, ensureMaia, openGame, username, display, say, hush }) {
   const $ = (id) => document.getElementById(id);
-  const getElo = (id) => { try { return JSON.parse(store.get(SK(id))) || { r: START, n: 0 }; } catch { return { r: START, n: 0 }; } };
+  const startOf = (id) => (id === 'puzzle' ? PUZZLE_START : START);
+  const getElo = (id) => { try { return JSON.parse(store.get(SK(id))) || { r: startOf(id), n: 0 }; } catch { return { r: startOf(id), n: 0 }; } };
   const setElo = (id, v) => store.set(SK(id), JSON.stringify(v));
+  // Les problèmes démarrent désormais à 800 : remise à niveau unique des anciens profils.
+  if (!store.get('puzzle-start-800')) { store.set(SK('puzzle'), JSON.stringify({ r: PUZZLE_START, n: 0 })); store.set('puzzle-start-800', '1'); }
+  const readJson = (k) => { try { return JSON.parse(store.get(k)); } catch { return null; } };
   const pool = createPool(store);
   let cg = null;
   let session = 0;
@@ -70,25 +76,45 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
 
   /* ---------- Problèmes ---------- */
 
+  async function ensureEngine() {
+    if (!engine) { engine = new Engine(); await engine.init(); }
+    return engine;
+  }
+
+  function presentPuzzle() {
+    P.c = new Chess(P.p.start);
+    P.idx = 0;
+    P.done = false;
+    P.busy = false;
+    P.lastPlayed = null;
+    head('Problèmes', `Trait aux ${P.c.turn() === 'w' ? 'Blancs' : 'Noirs'}`);
+    setBoard(P.c, P.orient, P.p.lastMove, true, onPuzzleMove);
+    actions([['Voir la solution', revealSolution]]);
+  }
+
+  // Un problème reste en cours tant qu'il n'est pas réussi, même si on quitte l'écran.
+  const savePuzzle = () => store.set('puzzle-current', JSON.stringify({ p: P.p, failed: P.failed }));
+
   async function nextPuzzle() {
     const my = ++session;
     actions([]);
     head('Problèmes', 'Chargement…');
     showElo('puzzle');
-    msg('Recherche d’un problème à ton niveau…');
     board().set({ movable: { color: undefined } });
-    let p;
-    try { p = await pool.next(getElo('puzzle').r); } catch {
-      if (my === session) { msg('Impossible de charger un problème. Vérifie ta connexion, puis réessaie.', 'bad'); actions([['Réessayer', nextPuzzle, true]]); }
-      return;
+    const saved = readJson('puzzle-current');
+    let p = saved && saved.p;
+    if (!p) {
+      msg('Recherche d’un problème à ton niveau…');
+      try { p = await pool.next(getElo('puzzle').r); } catch {
+        if (my === session) { msg('Impossible de charger un problème. Vérifie ta connexion, puis réessaie.', 'bad'); actions([['Réessayer', nextPuzzle, true]]); }
+        return;
+      }
+      if (my !== session) return;
     }
-    if (my !== session) return;
-    const c = new Chess(p.start);
-    Object.assign(P, { p, c, idx: 0, failed: false, done: false, my, orient: colorName(c.turn()), lastPlayed: null });
-    head('Problèmes', `Trait aux ${c.turn() === 'w' ? 'Blancs' : 'Noirs'}`);
-    msg('Trouve la meilleure suite.');
-    setBoard(c, P.orient, p.lastMove, true, onPuzzleMove);
-    actions([['Voir la solution', revealSolution]]);
+    Object.assign(P, { p, my, failed: !!(saved && saved.failed), orient: colorName(new Chess(p.start).turn()) });
+    savePuzzle();
+    presentPuzzle();
+    msg(P.failed ? 'Problème à terminer. Trouve la bonne suite.' : 'Trouve la meilleure suite.');
   }
 
   function rate(score) {
@@ -98,8 +124,17 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     showElo('puzzle', r.delta);
   }
 
+  function markFailed() {
+    if (P.failed) return;
+    P.failed = true;
+    stats.streak = 0;
+    rate(0);
+    savePuzzle();
+  }
+
   function finishPuzzle(text, tone) {
     P.done = true;
+    store.set('puzzle-current', 'null');
     const themes = P.p.themes.map((t) => THEMES[t]).filter(Boolean).slice(0, 3).join(' · ');
     head('Problèmes', `Problème ${P.p.rating}${themes ? ` · ${themes}` : ''}`);
     msg(text, tone);
@@ -107,8 +142,45 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     actions([['Problème suivant', nextPuzzle, true]]);
   }
 
+  function retryPuzzle() {
+    hush();
+    P.busy = false;
+    msg('Cherche encore.');
+    setBoard(P.c, P.orient, P.lastPlayed || P.p.lastMove, true, onPuzzleMove);
+    actions([['Voir la solution', revealSolution]]);
+  }
+
+  // Le coup reste affiché avec sa réfutation, le temps de comprendre l'erreur.
+  async function explainWrong(uci, trial, my) {
+    P.busy = true;
+    markFailed();
+    actions([]);
+    msg('Ce n’est pas le bon coup…', 'bad');
+    setBoard(trial, P.orient, uci, false);
+    let ex = null;
+    if (!trial.isGameOver()) {
+      try {
+        await ensureEngine();
+        const r = await engine.evaluate(trial.fen(), 12);
+        if (my !== session) return;
+        const mover = P.c.turn();
+        ex = explainWrongMove({
+          fenBefore: P.c.fen(), fenAfter: trial.fen(), themes: P.p.themes,
+          ply: { uci, from: uci.slice(0, 2), to: uci.slice(2, 4), color: mover },
+          after: { score: toWhiteScore(r.score, trial.turn() === 'w'), pv: r.pv },
+        });
+      } catch { ex = null; }
+    }
+    if (my !== session) return;
+    if (ex && ex.refutation) board().setAutoShapes([{ orig: ex.refutation.slice(0, 2), dest: ex.refutation.slice(2, 4), brush: 'red' }]);
+    const sentences = ex ? ex.sentences : ['Ce coup ne résout pas le problème.'];
+    msg(sentences.map(display).join(' '), 'bad');
+    say(sentences.map((t) => t.replace(/ : \[\[.*$/, '.')));
+    actions([['Réessayer', retryPuzzle, true]]);
+  }
+
   async function onPuzzleMove(orig, dest) {
-    if (P.done) return;
+    if (P.done || P.busy) return;
     const want = P.p.solution[P.idx];
     const piece = P.c.get(orig);
     const promoting = piece && piece.type === 'p' && (dest[1] === '8' || dest[1] === '1');
@@ -119,13 +191,8 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     const lastOne = P.idx === P.p.solution.length - 1;
     const ok = uci === want || (lastOne && trial.isCheckmate());
     const my = P.my;
-    if (!ok) {
-      if (!P.failed) { P.failed = true; stats.streak = 0; rate(0); }
-      msg('Ce n’est pas le bon coup. Réessaie.', 'bad');
-      await pause(280);
-      if (my === session && !P.done) setBoard(P.c, P.orient, P.lastPlayed || P.p.lastMove, true, onPuzzleMove);
-      return;
-    }
+    if (!ok) { await explainWrong(uci, trial, my); return; }
+    hush();
     P.c.move(parse(uci));
     P.idx += 1;
     P.lastPlayed = uci;
@@ -144,23 +211,27 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     setBoard(P.c, P.orient, reply, true, onPuzzleMove);
   }
 
+  // La solution se regarde, puis se rejoue : on ne passe au suivant qu'après l'avoir jouée.
   async function revealSolution() {
-    if (P.done) return;
+    if (P.done || P.busy) return;
     const my = P.my;
-    if (!P.failed) { P.failed = true; stats.streak = 0; rate(0); }
-    P.done = true;
+    markFailed();
+    P.busy = true;
+    hush();
     actions([]);
-    msg('Voici la solution.');
-    while (P.idx < P.p.solution.length) {
-      const u = P.p.solution[P.idx];
-      P.c.move(parse(u));
-      P.idx += 1;
-      P.lastPlayed = u;
-      setBoard(P.c, P.orient, u, false);
-      await pause(800);
+    msg('Regarde bien la solution.');
+    const c = new Chess(P.p.start);
+    setBoard(c, P.orient, P.p.lastMove, false);
+    for (const u of P.p.solution) {
+      await pause(850);
       if (my !== session) return;
+      c.move(parse(u));
+      setBoard(c, P.orient, u, false);
     }
-    finishPuzzle('Solution affichée.', '');
+    await pause(1100);
+    if (my !== session) return;
+    presentPuzzle();
+    msg('À toi de la rejouer pour terminer le problème.');
   }
 
   /* ---------- Mises en situation ---------- */
@@ -180,13 +251,20 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     showElo(id);
     head(def.title, 'Préparation…');
     if (!list.length) { msg('Aucune position disponible pour le moment.', 'bad'); return; }
-    const recent = (() => { try { return JSON.parse(store.get(`recent-${id}`)) || []; } catch { return []; } })();
-    const fresh = list.filter((x) => !recent.includes(x.fen));
-    const item = (fresh.length ? fresh : list)[Math.floor(Math.random() * (fresh.length || list.length))];
-    store.set(`recent-${id}`, JSON.stringify([...recent, item.fen].slice(-Math.floor(list.length * 0.8))));
+    // Une position reste à résoudre tant qu'elle n'est pas réussie.
+    let current = readJson(`current-${id}`);
+    if (!current || !list.some((p) => p.fen === current.fen)) {
+      const recent = readJson(`recent-${id}`) || [];
+      const fresh = list.filter((p) => !recent.includes(p.fen));
+      const chosen = (fresh.length ? fresh : list)[Math.floor(Math.random() * (fresh.length || list.length))];
+      store.set(`recent-${id}`, JSON.stringify([...recent, chosen.fen].slice(-Math.floor(list.length * 0.8))));
+      current = { fen: chosen.fen, rated: false };
+      store.set(`current-${id}`, JSON.stringify(current));
+    }
+    const item = list.find((p) => p.fen === current.fen);
     const c = new Chess(item.fen);
     const user = c.turn();
-    Object.assign(P, { def, id, c, user, my, ply: 0, done: false, startFen: item.fen, thinking: true, orient: colorName(user), lastPlayed: null });
+    Object.assign(P, { def, id, c, user, my, ply: 0, done: false, startFen: item.fen, thinking: true, orient: colorName(user), lastPlayed: null, retry: current.rated });
     setBoard(c, P.orient, null, false);
     try {
       msg('Chargement de l’adversaire…');
@@ -199,9 +277,9 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     if (my !== session) return;
     P.thinking = false;
     subtitle();
-    msg(`${item.title ? `${item.title}. ` : ''}${def.goal}`);
+    msg(`${current.rated ? 'Nouvel essai. ' : ''}${item.title ? `${item.title}. ` : ''}${def.goal}`);
     setBoard(c, P.orient, null, true, onSituationMove);
-    actions([['Abandonner', () => endSituation(0, 'Partie abandonnée.')]]);
+    actions([['Abandonner cet essai', () => endSituation(0, 'Essai abandonné.')]]);
   }
 
   const subtitle = () => { const left = Math.max(0, Math.ceil((P.def.cap - P.ply) / 2)); head(P.def.title, `Adversaire ${getElo(P.id).r} · ${left} coups restants · ${P.user === 'w' ? 'Blancs' : 'Noirs'}`); };
@@ -274,15 +352,26 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     P.done = true;
     session += 1;
     const id = P.id;
-    const e = getElo(id);
-    const r = updateElo(e, e.r, score);
-    setElo(id, { r: r.r, n: r.n });
-    showElo(id, r.delta);
-    head(P.def.title, score === 1 ? 'Réussi' : score === 0.5 ? 'Résultat moyen' : 'Raté');
-    msg(text, score === 1 ? 'good' : score === 0 ? 'bad' : '');
+    // Seul le premier essai compte pour l'Elo, comme pour les problèmes.
+    if (P.retry) {
+      showElo(id);
+    } else {
+      const e = getElo(id);
+      const r = updateElo(e, e.r, score);
+      setElo(id, { r: r.r, n: r.n });
+      showElo(id, r.delta);
+      store.set(`current-${id}`, JSON.stringify({ fen: P.startFen, rated: true }));
+    }
+    const solved = score === 1;
+    if (solved) store.set(`current-${id}`, 'null');
+    head(P.def.title, solved ? 'Réussi' : 'À refaire');
+    msg(solved ? text : `${text} Il faut réussir cette position pour passer à la suivante.`, solved ? 'good' : score === 0 ? 'bad' : '');
     setBoard(P.c, P.orient, P.lastPlayed, false);
     const hasMoves = P.c.history().length > 0;
-    actions([['Situation suivante', () => startSituation(id), true], ...(hasMoves ? [['Analyser cette partie', () => openGame(pgnOfGame(score))]] : [])]);
+    actions([
+      solved ? ['Situation suivante', () => startSituation(id), true] : ['Réessayer', () => startSituation(id), true],
+      ...(hasMoves ? [['Analyser cette partie', () => openGame(pgnOfGame(score))]] : []),
+    ]);
   }
 
   /* ---------- Accueil des exercices ---------- */

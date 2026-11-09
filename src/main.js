@@ -916,7 +916,9 @@ refreshAll();
 /* ---------- Navigation ---------- */
 
 const trainer = createTrainer({
-  h, store, Engine, ensureMaia,
+  h, store, Engine, ensureMaia, display,
+  say: (list) => { if (voice.auto) voice.say(list.map((t) => spoken(t))); else voice.stop(); },
+  hush: () => voice.stop(),
   openGame: (pgn) => { location.hash = 'analyse'; openGame(pgn, `train:${Date.now()}`); },
   username: () => state.username || store.get('username') || '',
 });
