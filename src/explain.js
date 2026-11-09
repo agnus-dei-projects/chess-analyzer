@@ -435,29 +435,23 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
   const mover = ply.color;
   const moveNumber = Math.floor(index / 2) + 1;
   const special = specialSentence(move, ply);
-  if (move.kind === 'forced' || move.kind === 'book') return { sentences: [special], spoken: [], line: '' };
+  if (move.kind === 'forced' || move.kind === 'book') return { sentences: [], notes: special ? [special] : [], line: '' };
 
   const sign = mover === 'w' ? 1 : -1;
   const mateFor = (s) => (s.type === 'mate' && s.value * sign > 0 ? s.value * sign : 0);
   const lead = special ? [special] : [];
 
   const STRONG = /\bmat\b|gagne|à la fois|cloue|défenseur|menace de prendre (le cavalier|le fou|la tour|la dame)|menace un mat/;
-  const noLine = (t) => t.replace(/ : \[\[.*$/, '.');
 
   if (move.playedBest) {
     const playedSteps = [...walk(fenBefore, [ply.uci]), ...walk(fenAfter, after.pv)];
     const why = reasonsFor({ fenBefore, steps: playedSteps, mover, moveNumber, mateIn: mateFor(before.score), prev, score: before.score, threat: before.threat, playedRecapture: true });
     const strong = why.find((t) => STRONG.test(t));
-    return {
-      sentences: [...lead, ...why.slice(0, 2).map(sentence)],
-      spoken: [special, strong ? sentence(strong) : ''].filter(Boolean),
-      line: lineOf(playedSteps.slice(1), 4),
-    };
+    return { sentences: [special, strong ? sentence(strong) : ''].filter(Boolean), notes: [], line: lineOf(playedSteps.slice(1), 4) };
   }
 
   const neg = negative({ fenBefore, fenAfter, ply, after, mover });
   const reasons = move.loss >= 5 ? neg.out : [];
-
   const bestSteps = walk(fenBefore, before.pv && before.pv.length ? before.pv : [before.best]);
   const playedRecapture = !!(ply.captured && prev && prev.captured && prev.to === ply.to);
   const why = bestSteps.length
@@ -472,13 +466,17 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
     const hit = r.m.captured ? [] : targets(r.fen, r.m.to).filter((t) => t.type !== 'k' && V[t.type] >= 3);
     if (r.m.captured || hit[0]) proven.push(`sinon ${side(opp(mover))} jouent ${tok(r.m.san)}${hit[0] ? `, qui attaque ${the(hit[0].type, hit[0].color)} en ${tok(hit[0].square)}` : ''}`);
   }
-  const better = bestSteps.length ? `Mieux valait ${moveAction(bestSteps[0].m)}${proven[0] ? `, car ${proven[0]}` : ''}.` : '';
-  const extra = proven[1] ? `Et ${proven[1]}.` : general[0] ? `Idée générale : ${general[0]}.` : '';
-
+  const line = lineOf(bestSteps.slice(1), 4);
+  if (!bestSteps.length) return { sentences: [...lead, ...reasons], notes: [], line };
+  const action = moveAction(bestSteps[0].m);
+  const better = `Mieux valait ${action}${proven[0] ? `, car ${proven[0]}` : ''}.`;
+  if (move.loss < 5) {
+    // Bon coup : la voix se tait, la nuance reste écrite à part.
+    return { sentences: lead, notes: [`Légèrement mieux : ${action}.`], line };
+  }
   return {
-    sentences: [...lead, ...reasons, better, extra].filter(Boolean),
-    // Sous 5 points perdus, le coup est bon : la voix n'a rien à ajouter, sauf pièce piégée.
-    spoken: move.loss >= 5 || reasons.length ? [...reasons.slice(0, 2).map(noLine), special && !reasons.length ? special : '', better].filter(Boolean) : [special].filter(Boolean),
-    line: lineOf(bestSteps.slice(1), 4),
+    sentences: [...reasons.slice(0, 2), special && !reasons.length ? special : '', better].filter(Boolean),
+    notes: [proven[1] ? `Et ${proven[1]}.` : '', general[0] ? `Idée générale : ${general[0]}.` : ''].filter(Boolean),
+    line,
   };
 }

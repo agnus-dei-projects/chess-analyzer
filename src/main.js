@@ -3,6 +3,8 @@ import { Chessground } from 'chessground';
 import {
   buildReport, formatScore, GLYPHS, KINDS, LABELS, MATE_CP, parseInfo, pickHuman, scoreToCp, toWhiteScore, winPct, FAIR_RESULTS,
 } from './analysis.js';
+import { Engine } from './engine.js';
+import { createTrainer } from './exercises.js';
 import { bookFromEcoUrl, explainMove, isSacrifice, sanToSpeech } from './explain.js';
 
 const API = 'https://api.chess.com/pub/player/';
@@ -25,82 +27,6 @@ const store = {
   get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* facultatif */ } },
 };
-
-/* ---------- Moteur ---------- */
-
-function engineUrl() {
-  const b64 = document.getElementById('sf-wasm').textContent.trim();
-  const js = atob(document.getElementById('sf-js').textContent.trim());
-  // Le moteur réclame son .wasm par fetch : on le lui sert depuis la page,
-  // ce qui permet d'ouvrir le fichier sans serveur.
-  const prelude = `(function(){var s=atob("${b64}"),u=new Uint8Array(s.length);`
-    + 'for(var i=0;i<s.length;i++)u[i]=s.charCodeAt(i);'
-    + 'self.fetch=function(){return Promise.resolve(new Response(u,{headers:{"Content-Type":"application/wasm"}}));};})();\n';
-  return URL.createObjectURL(new Blob([prelude, js], { type: 'text/javascript' }));
-}
-
-let workerUrl = null;
-
-class Engine {
-  constructor() {
-    workerUrl = workerUrl || engineUrl();
-    this.worker = new Worker(workerUrl);
-    this.waiting = null;
-    this.last = null;
-    this.failed = new Promise((_, reject) => {
-      this.worker.onerror = (e) => reject(new Error(e.message || 'moteur indisponible'));
-    });
-    this.worker.onmessage = (e) => this.onLine(String(e.data));
-  }
-
-  onLine(line) {
-    const info = parseInfo(line);
-    if (info) this.last = info.pv.length || !this.last ? info : { ...info, pv: this.last.pv };
-    if (info && this.multi && info.pv.length) this.multi.set(info.multipv, info);
-    if (this.waiting && this.waiting.test(line)) {
-      const { resolve } = this.waiting;
-      this.waiting = null;
-      resolve(line);
-    }
-  }
-
-  send(cmd, until) {
-    const done = until
-      ? new Promise((resolve) => { this.waiting = { test: (l) => l.startsWith(until), resolve }; })
-      : null;
-    this.worker.postMessage(cmd);
-    return done ? Promise.race([done, this.failed]) : Promise.resolve();
-  }
-
-  async init() {
-    await this.send('uci', 'uciok');
-    await this.send('setoption name Hash value 32');
-    await this.send('ucinewgame');
-    await this.send('isready', 'readyok');
-  }
-
-  async evaluate(fen, depth, only, moves) {
-    this.last = null;
-    await this.send(`position fen ${fen}${moves && moves.length ? ` moves ${moves.join(' ')}` : ''}`);
-    const line = await this.send(`go depth ${depth}${only ? ` searchmoves ${only.join(' ')}` : ''}`, 'bestmove');
-    const l = this.last || { type: 'cp', value: 0, pv: [] };
-    return { score: { type: l.type, value: l.value }, pv: l.pv, best: line.split(' ')[1] };
-  }
-
-  // Les meilleurs coups de la position, du point de vue du camp au trait.
-  async candidates(fen, moves, depth, count) {
-    await this.send(`setoption name MultiPV value ${count}`);
-    this.multi = new Map();
-    await this.send(`position fen ${fen}${moves.length ? ` moves ${moves.join(' ')}` : ''}`);
-    await this.send(`go depth ${depth}`, 'bestmove');
-    const found = [...this.multi.values()];
-    this.multi = null;
-    await this.send('setoption name MultiPV value 1');
-    return found.map((i) => ({ uci: i.pv[0], cp: i.type === 'cp' ? i.value : (i.value > 0 ? MATE_CP : -MATE_CP) }));
-  }
-
-  stop() { this.worker.terminate(); }
-}
 
 /* ---------- Partie ---------- */
 
@@ -216,7 +142,7 @@ function explanation(i) {
     });
   } catch (err) {
     console.warn(err);
-    return { sentences: [`${LABELS[move.kind]}.`], spoken: [`${LABELS[move.kind]}.`], line: '' };
+    return { sentences: [], notes: [], line: '' };
   }
 }
 
@@ -247,9 +173,11 @@ function renderVerdict() {
   box.append(h('div', { class: 'v-head' },
     h('span', { class: 'mark', 'data-kind': m.kind, 'aria-hidden': 'true' }, GLYPHS[m.kind]),
     h('p', { class: 'v-title' }, title, h('span', { class: 'v-kind' }, LABELS[m.kind])),
-    voice.available && ex.spoken.length ? h('button', { type: 'button', class: 'ghost listen', onclick: () => speakCurrent() }, 'Écouter') : null));
+    voice.available && ex.sentences.length ? h('button', { type: 'button', class: 'ghost listen', onclick: () => speakCurrent() }, 'Écouter') : null));
   const body = h('div', { class: 'v-body' });
   ex.sentences.forEach((t) => body.append(h('p', { class: 'v-text' }, display(t))));
+  if (!ex.sentences.length) body.append(h('p', { class: 'v-silent' }, 'Coup sans commentaire'));
+  (ex.notes || []).forEach((t) => body.append(h('p', { class: 'v-note' }, display(t))));
   if (ex.line) body.append(h('p', { class: 'v-line' }, 'Suite prévue : ', display(ex.line)));
   if (state.variation && state.variation.ended && cursor === game.plies.length) body.append(h('p', { class: 'v-text' }, h('strong', {}, state.variation.ended)));
   box.append(body);
@@ -413,22 +341,44 @@ const voice = {
     if (this.chosen) u.voice = this.chosen;
     this.synth.speak(u);
   },
-  stop() { if (this.synth) { this.run += 1; this.synth.cancel(); } },
+  stop() {
+    if (!this.synth) return;
+    this.run += 1;
+    this.current = null;
+    if (this.synth.speaking || this.synth.pending) { this.synth.cancel(); this.cancelledAt = performance.now(); }
+  },
   say(sentences) {
     if (!this.synth) return;
     this.stop();
+    if (!sentences.length) return;
     if (!this.chosen) this.pick();
+    if (this.synth.resume) this.synth.resume(); // un navigateur peut rester en pause après une mise en arrière-plan
     const run = this.run;
-    const nextUp = (i) => {
-      if (run !== this.run || i >= sentences.length) return;
-      const u = new SpeechSynthesisUtterance(sentences[i]);
-      u.lang = 'fr-FR';
-      if (this.chosen) u.voice = this.chosen;
-      u.rate = this.rate; u.pitch = this.pitch;
-      u.onend = () => nextUp(i + 1);
-      this.synth.speak(u);
-    };
-    nextUp(0);
+    // Enchaîner speak() juste après cancel() peut faire perdre la phrase : on laisse un court délai.
+    const wait = Math.max(0, 140 - (performance.now() - (this.cancelledAt || -1e6)));
+    const start = () => this.speakFrom(sentences, 0, 0, run);
+    if (wait > 0) setTimeout(start, wait); else start();
+  },
+  speakFrom(sentences, i, attempt, run) {
+    if (run !== this.run || i >= sentences.length) return;
+    const u = new SpeechSynthesisUtterance(sentences[i]);
+    this.current = u; // référence gardée : sans elle, la fin de phrase peut ne jamais être signalée
+    u.lang = 'fr-FR';
+    if (this.chosen) u.voice = this.chosen;
+    u.rate = this.rate; u.pitch = this.pitch;
+    let started = false;
+    u.onstart = () => { started = true; };
+    const next = () => { if (this.current === u && run === this.run) this.speakFrom(sentences, i + 1, 0, run); };
+    u.onend = next;
+    u.onerror = (e) => { if (e.error !== 'canceled' && e.error !== 'interrupted') next(); };
+    this.synth.speak(u);
+    setTimeout(() => {
+      if (started || this.current !== u || run !== this.run || attempt >= 2) return;
+      this.current = null;
+      this.synth.cancel();
+      if (this.synth.resume) this.synth.resume();
+      setTimeout(() => this.speakFrom(sentences, i, attempt + 1, run), 140);
+    }, 1800);
   },
 };
 
@@ -436,7 +386,7 @@ function speakCurrent() {
   if (state.cursor === 0) { voice.stop(); return; }
   const ex = explanation(state.cursor - 1);
   if (!ex) { voice.stop(); return; }
-  voice.say(ex.spoken.map(spoken));
+  voice.say(ex.sentences.map((t) => spoken(t.replace(/ : \[\[.*$/, '.'))));
 }
 
 const REGION = { 'fr-fr': 'France', 'fr-ca': 'Québec', 'fr-be': 'Belgique', 'fr-ch': 'Suisse' };
@@ -600,10 +550,15 @@ const VARIATION_MAX_PLIES = 300;
 const THREAT_DEPTH = 8;
 let maiaModule = null;
 
-async function loadMaia(v) {
+async function ensureMaia(onProgress) {
   const base = new URL('maia/', location.href).href;
   maiaModule = maiaModule || await import(`${base}maia.mjs`);
-  await maiaModule.load(base, (pct) => { if (v.active) { v.loadPct = pct; renderGuide(); } });
+  await maiaModule.load(base, onProgress);
+  return maiaModule;
+}
+
+async function loadMaia(v) {
+  await ensureMaia((pct) => { if (v.active) { v.loadPct = pct; renderGuide(); } });
   v.loadPct = null;
 }
 
@@ -896,6 +851,7 @@ $('voice').addEventListener('click', () => {
   if (voice.auto) speakCurrent(); else voice.stop();
 });
 document.addEventListener('pointerdown', () => voice.prime(), { once: true });
+document.addEventListener('visibilitychange', () => { if (document.hidden) voice.stop(); });
 if (voice.synth) {
   voice.pick();
   voice.synth.addEventListener?.('voiceschanged', () => voice.pick());
@@ -956,3 +912,33 @@ window.__openPgn = openGame;
 if (__AUDIT__) window.__state = state;
 setTab('parties');
 refreshAll();
+
+/* ---------- Navigation ---------- */
+
+const trainer = createTrainer({
+  h, store, Engine, ensureMaia,
+  openGame: (pgn) => { location.hash = 'analyse'; openGame(pgn, `train:${Date.now()}`); },
+  username: () => state.username || store.get('username') || '',
+});
+const SCREENS = {
+  '': { id: 'home', title: 'Chess Analyzer' },
+  analyse: { id: 'analyse', title: 'Analyse de partie', back: '' },
+  exercices: { id: 'hub', title: 'Exercices', back: '' },
+  problemes: { id: 'train', title: 'Problèmes', back: 'exercices' },
+};
+function route() {
+  const key = location.hash.slice(1);
+  const sit = key.startsWith('situation-') ? key.slice(10) : null;
+  const def = sit ? { id: 'train', title: trainer.titleOf(sit), back: 'exercices' } : (SCREENS[key] || SCREENS['']);
+  document.body.dataset.screen = def.id;
+  document.querySelectorAll('.screen').forEach((s) => { s.hidden = s.id !== `screen-${def.id}`; });
+  $('bar-title').textContent = def.title;
+  $('bar-back').hidden = def.back === undefined;
+  $('bar-back').onclick = () => { location.hash = def.back; };
+  voice.stop();
+  if (def.id === 'hub' || def.id === 'home') trainer.renderHub();
+  if (def.id === 'train') trainer.open(sit || 'puzzle'); else trainer.close();
+  if (def.id === 'analyse') { cg.redrawAll(); renderChart(); }
+}
+window.addEventListener('hashchange', route);
+route();
