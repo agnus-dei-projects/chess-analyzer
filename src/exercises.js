@@ -28,7 +28,7 @@ function destsOf(c) {
 }
 const colorName = (t) => (t === 'w' ? 'white' : 'black');
 
-export function createTrainer({ h, store, Engine, ensureMaia, openGame, username, display, say, hush }) {
+export function createTrainer({ h, store, Engine, ensureMaia, openGame, username, display, say, hush, fx }) {
   const $ = (id) => document.getElementById(id);
   const getElo = (id) => { try { return JSON.parse(store.get(SK(id))) || { r: START, n: 0 }; } catch { return { r: START, n: 0 }; } };
   const setElo = (id, v) => store.set(SK(id), JSON.stringify(v));
@@ -42,7 +42,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
   let engine = null;
   let stats = { streak: 0 };
   const P = {}; // état de l'exercice courant
-  if (__AUDIT__) window.__P = P;
+  if (__AUDIT__) { window.__P = P; window.__fx = fx; }
 
   const msg = (text, tone = '') => { const m = $('t-msg'); m.textContent = text; m.dataset.tone = tone; };
   const actions = (list) => {
@@ -59,7 +59,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
 
   function board() {
     if (!cg) {
-      cg = Chessground($('tboard'), { coordinates: true, animation: { enabled: true, duration: 170 }, movable: { free: false, showDests: true }, premovable: { enabled: false }, drawable: { enabled: true, visible: true }, highlight: { lastMove: true, check: true } });
+      cg = Chessground($('tboard'), { coordinates: true, animation: { enabled: true, duration: fx.duration() }, movable: { free: false, showDests: true }, premovable: { enabled: false }, drawable: { enabled: true, visible: true }, highlight: { lastMove: true, check: true } });
       new ResizeObserver(() => cg.redrawAll()).observe($('tboard'));
     }
     return cg;
@@ -72,6 +72,9 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     });
     board().setAutoShapes([]);
   }
+
+  // Son et effet d'un coup. animated = false quand le joueur vient de poser la pièce lui-même.
+  const moveFx = (m, c, animated = true) => fx.played({ san: m.san, to: m.to, fen: c.fen(), el: $('tboard'), orientation: P.orient, animated });
 
   /* ---------- Problèmes ---------- */
 
@@ -190,9 +193,9 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     const lastOne = P.idx === P.p.solution.length - 1;
     const ok = uci === want || (lastOne && trial.isCheckmate());
     const my = P.my;
-    if (!ok) { await explainWrong(uci, trial, my); return; }
+    if (!ok) { fx.played({ san: trial.history().slice(-1)[0], to: dest, fen: trial.fen(), el: $('tboard'), orientation: P.orient, animated: false }); await explainWrong(uci, trial, my); return; }
     hush();
-    P.c.move(parse(uci));
+    moveFx(P.c.move(parse(uci)), P.c, false);
     P.idx += 1;
     P.lastPlayed = uci;
     if (P.idx >= P.p.solution.length) {
@@ -204,7 +207,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     await pause(420);
     if (my !== session) return;
     const reply = P.p.solution[P.idx];
-    P.c.move(parse(reply));
+    moveFx(P.c.move(parse(reply)), P.c);
     P.idx += 1;
     P.lastPlayed = reply;
     setBoard(P.c, P.orient, reply, true, onPuzzleMove);
@@ -224,7 +227,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     for (const u of P.p.solution) {
       await pause(850);
       if (my !== session) return;
-      c.move(parse(u));
+      moveFx(c.move(parse(u)), c);
       setBoard(c, P.orient, u, false);
     }
     await pause(1100);
@@ -294,7 +297,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     const my = P.my;
     const piece = P.c.get(orig);
     const promo = piece && piece.type === 'p' && (dest[1] === '8' || dest[1] === '1') ? 'q' : undefined;
-    P.c.move({ from: orig, to: dest, promotion: promo });
+    moveFx(P.c.move({ from: orig, to: dest, promotion: promo }), P.c, false);
     P.ply += 1;
     P.lastPlayed = orig + dest + (promo || '');
     P.thinking = true;
@@ -308,7 +311,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     try { reply = await (await ensureMaia(() => {})).move(P.c.fen(), elo, elo, 1); } catch { reply = null; }
     if (my !== session) return;
     if (!reply) { const r = await engine.evaluate(P.c.fen(), 8); reply = r.best; if (my !== session) return; }
-    P.c.move(parse(reply));
+    moveFx(P.c.move(parse(reply)), P.c);
     P.ply += 1;
     P.lastPlayed = reply;
     end = gameEnd(P.c);

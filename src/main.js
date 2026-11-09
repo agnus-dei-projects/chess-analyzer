@@ -5,6 +5,7 @@ import {
 } from './analysis.js';
 import { Engine } from './engine.js';
 import { createTrainer } from './exercises.js';
+import { createFx } from './fx.js';
 import { bookFromEcoUrl, explainMove, isSacrifice, sanToSpeech } from './explain.js';
 
 const API = 'https://api.chess.com/pub/player/';
@@ -60,8 +61,9 @@ const state = { exCache: new Map(), game: null, evals: [], report: null, cursor:
 const cache = new Map();
 let job = null; // analyse en cours
 
+const fx = createFx(store);
 const cg = Chessground($('board'), {
-  viewOnly: true, coordinates: true, animation: { enabled: true, duration: 140 },
+  viewOnly: true, coordinates: true, animation: { enabled: true, duration: fx.duration() },
   drawable: { enabled: false, visible: true },
 });
 new ResizeObserver(() => cg.redrawAll()).observe($('board'));
@@ -94,7 +96,7 @@ function renderBoard() {
     orientation: orientation(),
     lastMove: ply ? [ply.from, ply.to] : undefined,
     turnColor: game.fens[cursor].split(' ')[1] === 'w' ? 'white' : 'black',
-    check: false,
+    check: ply && /[+#]$/.test(ply.san) ? (game.fens[cursor].split(' ')[1] === 'w' ? 'white' : 'black') : false,
   });
   const showBetter = judged && !judged.pending && !judged.playedBest && judged.kind !== 'forced' && judged.bestUci;
   cg.setAutoShapes(showBetter ? [{ orig: judged.bestUci.slice(0, 2), dest: judged.bestUci.slice(2, 4), brush: 'green' }] : []);
@@ -304,14 +306,21 @@ function chartHover(e) {
 
 /* ---------- Navigation ---------- */
 
+function playedFx(i) {
+  const ply = state.game.plies[i];
+  fx.played({ san: ply.san, to: ply.to, fen: state.game.fens[i + 1], el: $('board'), orientation: orientation() });
+}
+
 function go(i, fromUser) {
   if (!state.game) return;
   const next = Math.max(0, Math.min(state.game.plies.length, i));
   const moved = next !== state.cursor;
+  const stepped = next === state.cursor + 1;
   state.cursor = next;
   renderBoard();
   renderMoves();
   renderChart();
+  if (fromUser && stepped) playedFx(next - 1);
   if (fromUser && moved) {
     if (voice.auto) speakCurrent(); else voice.stop();
   }
@@ -675,6 +684,7 @@ async function advanceVariation() {
     v.busy = false;
     state.cursor = state.game.plies.length;
     refreshAll();
+    playedFx(state.cursor - 1);
     if (voice.auto) speakCurrent(); else voice.stop();
     if (v.ended) v.engine.stop();
     else { v.pending = prepareNext(v); v.pending.catch(() => {}); }
@@ -848,6 +858,8 @@ $('prev').addEventListener('click', () => go(state.cursor - 1, true));
 $('next').addEventListener('click', stepForward);
 $('last').addEventListener('click', () => go(1e4, true));
 $('guide-start').addEventListener('click', startVariation);
+$('sound').value = fx.enabled() ? 'on' : 'off';
+$('sound').addEventListener('change', (e) => fx.setEnabled(e.target.value === 'on'));
 $('my-level').value = store.get('my-level') || '400';
 $('my-level').addEventListener('change', (e) => store.set('my-level', e.target.value));
 $('guide-exit').addEventListener('click', exitVariation);
@@ -926,7 +938,7 @@ refreshAll();
 /* ---------- Navigation ---------- */
 
 const trainer = createTrainer({
-  h, store, Engine, ensureMaia, display,
+  h, store, Engine, ensureMaia, display, fx,
   say: (list) => { if (voice.auto) voice.say(list.map((t) => spoken(t))); else voice.stop(); },
   hush: () => voice.stop(),
   openGame: (pgn) => { location.hash = 'analyse'; openGame(pgn, `train:${Date.now()}`); },
