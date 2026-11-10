@@ -23,3 +23,7 @@ Il est chargé via [maia3-js](https://www.npmjs.com/package/maia3-js) (MIT) et o
 Polices Young Serif, Instrument Sans et JetBrains Mono (SIL Open Font License 1.1), servies depuis `docs/fonts/` via Fontsource.
 
 Problèmes : [base de problèmes Lichess](https://database.lichess.org/) (CC0), lue via le jeu de données public Hugging Face `Lichess/chess-puzzles`.
+
+## Tests des commentaires
+
+`node tests/run.mjs` rejoue chaque position signalée (`tests/cases.json`) comme dans l'appli et contrôle le commentaire produit. `node tests/replay.mjs fichier.txt` rejoue un signalement copié depuis le bouton « Signaler ce commentaire ».

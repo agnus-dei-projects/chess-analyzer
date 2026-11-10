@@ -215,7 +215,33 @@ function renderVerdict() {
   }
   if (ex.line) body.append(h('p', { class: 'v-line' }, 'Suite prévue : ', display(ex.line)));
   if (state.variation && state.variation.ended && cursor === game.plies.length) body.append(h('p', { class: 'v-text' }, h('strong', {}, state.variation.ended)));
+  const flag = h('button', { type: 'button', class: 'v-flag', onclick: () => reportComment(cursor - 1, ex, flag) }, 'Signaler ce commentaire');
+  body.append(flag);
   box.append(body);
+}
+
+// Copie tout ce qu'il faut pour reproduire un commentaire douteux : position exacte, coup, texte, calculs du moteur.
+async function reportComment(i, ex, btn) {
+  const { game, report } = state;
+  const m = report.moves[i];
+  const slim = (ev) => ev && { score: ev.score, best: ev.best, pv: ev.pv, second: ev.second, threat: ev.threat, ifTaken: ev.ifTaken, afterRef: ev.afterRef, noRecapture: ev.noRecapture };
+  const text = `Signalement Chess Analyzer\n${JSON.stringify({
+    coup: `${Math.floor(i / 2) + 1}${game.plies[i].color === 'w' ? '.' : '…'}${game.plies[i].san}`,
+    classement: m.kind,
+    commentaire: [...ex.sentences, ...ex.notes].join(' ').replace(/\[\[|\]\]/g, ''),
+    fen: game.fens[i], uci: game.plies[i].uci, prev: game.plies[i - 1] ? game.plies[i - 1].uci : null,
+    profondeur: +$('depth').value, rejoue: !!state.variation,
+    avant: slim(state.evals[i]), apres: slim(state.evals[i + 1]),
+  })}`;
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; } catch {
+    const ta = h('textarea', { style: 'position:fixed;opacity:0' });
+    ta.value = text; document.body.append(ta); ta.select();
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    ta.remove();
+  }
+  btn.textContent = ok ? 'Copié : colle-le dans la conversation' : 'Copie impossible sur ce navigateur';
+  setTimeout(() => { if (btn.isConnected) btn.textContent = 'Signaler ce commentaire'; }, 4000);
 }
 
 /* ---------- Suites à voir sur l'échiquier ---------- */
@@ -752,12 +778,42 @@ async function deepen(game, engines, depth, me) {
       ev.pv = [...ev.pv.slice(0, steps.length), ...r.pv];
     }
   };
+  // Sondes « pourquoi pas ? » : le moteur calcule lui-même les réponses que le commentaire affirmerait.
+  const ORDER = 'pnbrqk';
+  const probe = async (engine, i, ev) => {
+    const nx = state.evals[i + 1];
+    if (report.moves[i].playedBest || !ev.best || !nx || !nx.pv || !nx.pv.length) return;
+    const rU = nx.pv[0];
+    // 1. La réponse qui punit le coup joué marche-t-elle encore après le coup conseillé ?
+    const cb = new Chess(game.fens[i]);
+    cb.move({ from: ev.best.slice(0, 2), to: ev.best.slice(2, 4), promotion: ev.best[4] });
+    if (!cb.isGameOver()) {
+      if (cb.moves({ verbose: true }).some((x) => x.from + x.to + (x.promotion || '') === rU)) {
+        const r = await engine.evaluate(cb.fen(), d, [rU]);
+        if (me.cancelled) return;
+        ev.afterRef = { uci: rU, legal: true, score: toWhiteScore(r.score, cb.turn() === 'w'), pv: r.pv };
+      } else ev.afterRef = { uci: rU, legal: false };
+    }
+    // 2. L'adversaire prend, et la suite ne reprend pas : que se passe-t-il si on reprend ?
+    const cr = new Chess(game.fens[i + 1]);
+    const rm = cr.move({ from: rU.slice(0, 2), to: rU.slice(2, 4), promotion: rU[4] });
+    if (!rm.captured || (nx.pv[1] && nx.pv[1].slice(2, 4) === rm.to)) return;
+    const recs = cr.moves({ verbose: true }).filter((x) => x.to === rm.to && x.captured).sort((a, b) => ORDER.indexOf(a.piece) - ORDER.indexOf(b.piece));
+    if (!recs.length) return;
+    const c2 = new Chess(recs[0].after);
+    if (c2.isGameOver()) return;
+    const r2 = await engine.evaluate(recs[0].after, d);
+    if (me.cancelled) return;
+    nx.noRecapture = { uci: recs[0].from + recs[0].to + (recs[0].promotion || ''), pv: r2.pv, score: toWhiteScore(r2.score, c2.turn() === 'w') };
+  };
   await share(engines, todo, 2, me, async (engine, i) => {
     await extend(engine, i);
     if (me.cancelled) return;
     if (!report.moves[i].playedBest) await extend(engine, i + 1);
     if (me.cancelled) return;
     const ev = state.evals[i];
+    await probe(engine, i, ev);
+    if (me.cancelled) return;
     const first = walk(game.fens[i], ev.pv, 2);
     if (!first[0] || first[0].m.san.endsWith('#')) return;
     const ep = enPrise(first[0].m);

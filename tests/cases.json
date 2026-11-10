@@ -1,0 +1,12 @@
+[
+  { "name": "19.g3 — pion g2 cloué, f4 chasse la dame", "fen": "r3k2r/1p1n1p1p/2p3p1/p2pP1q1/3P4/2NB3b/PPQ1RPP1/4R1K1 w kq - 0 19", "uci": "g2g3",
+    "must": ["\\[\\[f4\\]\\]", "cloue"], "mustNot": [] },
+  { "name": "6.e3 — Cd5 double menace, matériel à rattraper", "fen": "r1b1kbnr/pppp1ppp/2n5/4P3/5q2/2N2N2/PPP1PPPP/R2QKB1R w KQkq - 0 6", "uci": "e2e3",
+    "must": ["en même temps \\[\\[Nxc7\\+\\]\\]", "fourchette"], "mustNot": ["car ça menace de prendre la dame"] },
+  { "name": "11.Cxd7 — simple échange, pas une fourchette", "fen": "r1b1qrk1/ppbn2pp/2p1pn2/2PpNp2/3P1B2/3BP3/PP1N1PPP/R2Q1RK1 w - - 0 11", "uci": "e5d7",
+    "must": ["échange les cavaliers"], "mustNot": ["fourchette", "menace"] },
+  { "name": "14.Ce5 — d4 surchargé, Cxc5 gagne un pion", "fen": "r1b2rk1/ppq3pp/2p1p3/2Pp1p2/3Pn3/3BPN2/PP3PPP/R2Q1RK1 w - - 0 14", "uci": "f3e5",
+    "must": ["\\[\\[c5\\]\\]", "reprend", "\\[\\[e5\\]\\]"], "mustNot": ["déjà menacé", "double les pions"] },
+  { "name": "23.Cxc8 — Dh3 menace mat, pion g2 cloué", "fen": "2r4k/4N1pp/1p2p1rq/3p1p2/1P1Pn3/3BP3/P4PPP/3Q1RK1 w - - 0 23", "uci": "e7c8",
+    "must": ["\\[\\[Qh3\\]\\]", "menace mat", "cloué"], "mustNot": ["double les pions"] }
+]
