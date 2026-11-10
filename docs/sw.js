@@ -1,5 +1,5 @@
 // Garde l'application disponible hors connexion. Les appels à Chess.com ne passent pas par le cache.
-const CACHE = 'chess-analyzer-eb5901711b';
+const CACHE = 'chess-analyzer-68e13e5c14';
 const MAIA = 'chess-analyzer-maia-5m-v1'; // conservé d'une version à l'autre : 22 Mo à ne pas retélécharger
 const FONTS = ['young-serif-400', 'instrument-sans-400', 'instrument-sans-500', 'instrument-sans-600', 'jetbrains-mono-400', 'jetbrains-mono-600'].map((f) => `fonts/${f}.woff2`);
 const SF = ['sf/stockfish-19-lite-single.js', 'sf/stockfish-19-lite-single.wasm'];

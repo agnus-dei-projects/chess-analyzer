@@ -301,7 +301,7 @@ function negative(ctx) {
       out.push(`Ça laisse ${the(r.m.captured, mover)} en ${tok(r.m.to)} se faire prendre${was}.`);
       said = listPieces({ [r.m.captured]: 1 });
     } else if (!trap) {
-      out.push(`Ça coûte du matériel : ${lineOf(steps, 4)}.`);
+      out.push(`Ça coûte du matériel : ${sayLine(steps, mover, 4)}.`);
     }
     if (lost && (lost !== said || won)) out.push(`Au final, ${side(mover)} perdent ${lost}${won ? ` contre ${won}` : ''}.`);
     return { out, r, told: -ex.net, vague: !said && !trap };
@@ -314,7 +314,7 @@ function negative(ctx) {
   const promo = steps.slice(0, 8).find((s) => s.m.promotion && s.m.color !== mover);
   if (promo) { out.push(`Ça laisse l’adversaire promouvoir : ${lineOf(steps, 5)}.`); return { out, r }; }
   const checks = steps.slice(0, 6).filter((s) => s.m.color !== mover && s.m.san.includes('+')).length;
-  if (checks >= 2 && lineLoss <= -3) { out.push(`${cap(the('k', mover))} subit une série d’échecs : ${lineOf(steps, 5)}.`); return { out, r, vague: true }; }
+  if (checks >= 2 && lineLoss <= -3) { out.push(`${cap(the('k', mover))} subit une série d’échecs : ${sayLine(steps, mover, 5)}.`); return { out, r, vague: true }; }
   return { out, r };
 }
 
@@ -659,6 +659,11 @@ function clause(s, prevStep, { own, first }) {
   return base;
 }
 
+// Quelques coups d'une suite, dits en mots plutôt qu'en notation.
+function sayLine(steps, mover, n) {
+  return steps.slice(0, n).map((s, i) => clause(s, steps[i - 1], { own: s.m.color !== mover, first: false })).join(', ');
+}
+
 // Raconte la suite après le premier coup, jusqu'au mat ou jusqu'à ce que le matériel soit récupéré.
 // Renvoie null si rien de décisif n'arrive dans les coups racontés : on ne promet pas ce que la suite ne montre pas.
 export function narrate(startFen, steps, mover, { max = 8, mateIn = 0, winning = false } = {}) {
@@ -666,24 +671,29 @@ export function narrate(startFen, steps, mover, { max = 8, mateIn = 0, winning =
   const base = materialFor(startFen, mover);
   const parts = [];
   let end = -1; let mate = false;
+  let cand = -1; let candBal = 0; let lastBal = 0;
   for (let i = 1; i < steps.length && i <= max; i += 1) {
     const s = steps[i];
     parts.push(clause(s, steps[i - 1], { own: s.m.color === mover, first: i === 1 && s.m.color !== mover }));
     if (s.m.san.endsWith('#')) { end = i; mate = s.m.color === mover; break; }
     const next = steps[i + 1];
     const bal = materialFor(s.fen, mover) - base;
+    lastBal = bal;
     if (mateIn) continue; // mat annoncé : on va jusqu'au mat, sans s'arrêter au matériel
     // La suite s'arrête sur une prise qui peut être reprise : le décompte serait faux
     // (ou sur une prise que la suite ne reprend pas alors qu'elle le pourrait : variante trop touffue pour conclure)
     if (s.m.captured && s.m.color === mover && !(next && next.m.to === s.m.to) && new Chess(s.fen).moves({ verbose: true }).some((x) => x.to === s.m.to && x.captured)) break;
     if (i >= 2 && bal >= 1 && s.m.color === mover && !(next && next.m.captured && steps[i + 2] === undefined)) {
       // la prise adverse qui suit éventuellement fait partie du décompte
+      if (cand < 0 && !(next && next.m.captured && next.m.to === s.m.to)) { cand = i; candBal = bal; }
       if (next && next.m.captured) continue;
       if (steps[i + 2] && steps[i + 2].m.captured && i + 2 <= max) continue; // le gain continue au coup suivant
       end = i; break;
     }
     if (i >= 3 && bal >= 1 && s.m.color !== mover && !(next && next.m.captured)) { end = i; break; }
   }
+  // Le gain était acquis plus tôt et la suite n'a fait qu'échanger sans le remettre en cause : on s'arrête au gain.
+  if (end < 0 && cand > 0 && !mateIn && lastBal >= candBal - 1) end = cand;
   if (end < 0) {
     // Rien de compté dans les coups racontés : on ne conclut que si le moteur annonce un mat ou un gain net.
     if (!mateIn && !winning) return null;
@@ -904,7 +914,7 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
     const sgn = foe === 'w' ? 1 : -1;
     const R0 = narrate(fenBefore, playedLine, foe, { max: 7, mateIn: after.score.type === 'mate' && after.score.value * sgn > 0 ? after.score.value * sgn : 0 });
     const R = settle(R0, after.score, foe, false);
-    if (R && R.text && !R.open && (R.mate || (R.outcome && !/équilibrée/.test(R.outcome) && R.net >= 1)) && (!reasons.length || neg.vague || R.net >= (neg.told || 0) + 2)) {
+    if (R && R.text && !R.open && worth(R) && (R.mate || (R.outcome && !/équilibrée/.test(R.outcome) && R.net >= 1)) && (!reasons.length || neg.vague || R.net >= (neg.told || 0) + 2)) {
       reasons = [sentence(`après ce coup, ${withStory('', R)}`)];
       refuted = true;
     }
@@ -959,13 +969,14 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
   const punished = refuted || neg.mate || neg.tactic || (reasons.length > 0 && !fallback);
   // (inutile de le dire quand la punition était simplement de prendre la pièce qu'on vient de poser)
   const obvious = neg.r && neg.r.m.captured && neg.r.m.to === ply.to;
-  const stops = !neg.r || !punished || obvious ? '' : illegal ? `ça empêche ${tok(neg.r.m.san)}`
+  const sameName = neg.r && neg.r.m.san.replace(/[+#]/g, '') === bestSteps[0].m.san.replace(/[+#]/g, '');
+  const stops = !neg.r || !punished || obvious ? '' : illegal ? (sameName ? `ça empêche ${the(neg.r.m.piece, opp(mover))} de venir en ${tok(neg.r.m.to)}` : `ça empêche ${tok(neg.r.m.san)}`)
     : harmless ? (neg.mate ? 'ça pare le mat' : `après ça, ${tok(neg.r.m.san)} ne marche plus`) : '';
   // Le coup conseillé prend la pièce qui clouait : c'est la vraie raison, on la dit.
   const unpins = neg.pin && bestSteps[0].m.to === neg.pin.pinner.square
     ? `c’est ${ELLE(neg.pin.pinner.type)} qui cloue ${the(neg.pin.pinned.type, mover)} en ${tok(neg.pin.pinned.square)} : sans ${FEM[neg.pin.pinner.type] ? 'elle' : 'lui'}, ${tok(neg.r.m.san)} ne menace plus rien` : '';
   // Devant une erreur, une remarque de structure ne passe pas avant ce qui pare la punition.
-  if (move.loss >= 10 && (unpins || stops) && (!proven[0] || WEAK.test(proven[0]))) proven.unshift(unpins || stops);
+  if (move.loss >= 10 && (unpins || stops) && !/^ça gagne|^ça force le mat|^c’est mat|en même temps|tombe/.test(proven[0] || '')) proven.unshift(unpins || stops);
   else if (unpins) proven.unshift(unpins);
   if (move.loss >= 10) for (let k = proven.length - 1; k >= 1; k -= 1) if (WEAK.test(proven[k])) proven.splice(k, 1);
   if (grave) for (let k = proven.length - 1; k >= 0; k -= 1) if (WEAK.test(proven[k])) proven.splice(k, 1);
