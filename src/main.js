@@ -825,11 +825,10 @@ function startVariation() {
   const turn = g.fens[base].split(' ')[1];
   const me = u && g.white.toLowerCase() === u ? 'w' : u && g.black.toLowerCase() === u ? 'b' : turn;
   const rating = (c) => +(c === 'w' ? g.whiteElo : g.blackElo) || DEFAULT_ELO;
-  const level = $('my-level').value;
   const v = {
     base, main, me, engine: new Engine(), active: true, ended: null, busy: false, pending: null,
     oppElo: rating(me === 'w' ? 'b' : 'w'),
-    myElo: level === 'max' ? null : rating(me) + +level,
+    myElo: MAIA_TOP,
     myRating: rating(me), loadPct: 0, maiaFailed: false,
     mainReport: buildReport(g.plies, main.evals, g.bookPlies),
     mainEx: new Map(state.exCache),
@@ -846,6 +845,15 @@ function startVariation() {
 }
 
 // Calcule à l'avance le coup suivant : la touche › répond alors tout de suite.
+// Ton côté est joué par Maia à son plus fort : le réglage où elle rejoint le plus souvent le choix
+// de Stockfish (mesuré sur 240 positions : plafond vers 2400, au-delà elle ne progresse plus),
+// sans part de hasard. L'adversaire garde son Elo réel et ses coups humains.
+const MAIA_TOP = 2400;
+const MAIA_TOP_TEMPERATURE = 0.01;
+// Même à ce niveau Maia peut se tromper lourdement : au-delà de ce seuil (points de chance de gain
+// perdus, celui d'une « erreur »), ton côté joue le coup du moteur à la place.
+const MY_MAX_LOSS = 10;
+
 async function prepareNext(v) {
   await v.ready;
   const { engine } = v;
@@ -860,7 +868,7 @@ async function prepareNext(v) {
     const mine = c.turn() === v.me;
     if (!v.maiaFailed) {
       // L'adversaire joue comme à son Elo ; ton côté choisit plus souvent le coup principal.
-      const temperature = mine ? (elo >= 2000 ? 0.25 : 0.5) : 1;
+      const temperature = mine ? MAIA_TOP_TEMPERATURE : 1;
       const other = mine ? v.oppElo : (v.myElo || v.myRating);
       uci = await maiaModule.move(c.fen(), elo, other, temperature);
     } else {
@@ -870,21 +878,33 @@ async function prepareNext(v) {
   }
   const legal = c.moves().length;
   const prev = game.plies[n - 1];
-  const m = c.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] });
-  const ply = {
-    san: m.san, color: m.color, from: m.from, to: m.to, uci: m.from + m.to + (m.promotion || ''), legal, captured: m.captured, piece: m.piece,
-    sacrifice: isSacrifice(m), recapture: !!(m.captured && prev && prev.captured && prev.to === m.to), opening: '',
+  const mine = c.turn() === v.me;
+  const play = async (uci) => {
+    const c = replayTo(game, n);
+    const m = c.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] });
+    const ply = {
+      san: m.san, color: m.color, from: m.from, to: m.to, uci: m.from + m.to + (m.promotion || ''), legal, captured: m.captured, piece: m.piece,
+      sacrifice: isSacrifice(m), recapture: !!(m.captured && prev && prev.captured && prev.to === m.to), opening: '',
+    };
+    let ended = endText(c);
+    let ev;
+    if (ended) {
+      ev = { score: c.isCheckmate() ? { type: 'mate', value: 0, mated: c.turn() === 'w' ? 'white' : 'black' } : { type: 'cp', value: 0 }, best: null };
+    } else {
+      const r = await engine.evaluate(game.fens[0], +$('depth').value, null, [...ucis, ply.uci]);
+      ev = { score: toWhiteScore(r.score, c.turn() === 'w'), best: r.best, pv: r.pv };
+      if (n + 1 - v.base >= VARIATION_MAX_PLIES) ended = `Arrêt après ${VARIATION_MAX_PLIES} coups.`;
+    }
+      return { ply, fen: c.fen(), ev, ended };
   };
-  let ended = endText(c);
-  let ev;
-  if (ended) {
-    ev = { score: c.isCheckmate() ? { type: 'mate', value: 0, mated: c.turn() === 'w' ? 'white' : 'black' } : { type: 'cp', value: 0 }, best: null };
-  } else {
-    const r = await engine.evaluate(game.fens[0], +$('depth').value, null, [...ucis, ply.uci]);
-    ev = { score: toWhiteScore(r.score, c.turn() === 'w'), best: r.best, pv: r.pv };
-    if (n + 1 - v.base >= VARIATION_MAX_PLIES) ended = `Arrêt après ${VARIATION_MAX_PLIES} coups.`;
+  let out = await play(uci);
+  const best = state.evals[n].best;
+  if (mine && best && uci !== best) {
+    const w0 = winPct(scoreToCp(state.evals[n].score)); const w1 = winPct(scoreToCp(out.ev.score));
+    const loss = v.me === 'w' ? w0 - w1 : w1 - w0;
+    if (loss >= MY_MAX_LOSS) out = await play(best);
   }
-  return { ply, fen: c.fen(), ev, ended };
+  return out;
 }
 
 async function advanceVariation() {
@@ -941,7 +961,7 @@ function renderGuide() {
     $('guide-start').disabled = !!job || !ev || !ev.best;
     return;
   }
-  const levels = `Toi ${v.myElo == null ? 'max' : v.myElo} · Adversaire ${v.oppElo}`;
+  const levels = `Toi : niveau maximal · Adversaire ${v.oppElo}`;
   const loading = v.loadPct != null && !v.maiaFailed ? `Modèle humain : ${v.loadPct} %` : '';
   const note = v.maiaFailed ? ' · modèle humain indisponible' : '';
   $('guide-text').textContent = v.ended || loading || (v.busy ? 'Le coup arrive…' : `${levels}${note} · touche ›`);
@@ -1080,8 +1100,6 @@ $('last').addEventListener('click', () => go(1e4, true));
 $('guide-start').addEventListener('click', startVariation);
 $('sound').value = fx.enabled() ? 'on' : 'off';
 $('sound').addEventListener('change', (e) => fx.setEnabled(e.target.value === 'on'));
-$('my-level').value = store.get('my-level') || '400';
-$('my-level').addEventListener('change', (e) => store.set('my-level', e.target.value));
 $('guide-exit').addEventListener('click', exitVariation);
 $('voice').addEventListener('click', () => {
   voice.auto = !voice.auto;

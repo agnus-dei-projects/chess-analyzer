@@ -383,15 +383,6 @@ td:last-child { text-align: right; }
         </div>
       </div>
       <div class="field">
-        <label for="my-level">Ton niveau quand tu rejoues</label>
-        <select id="my-level">
-          <option value="200">Ton Elo + 200</option>
-          <option value="400">Ton Elo + 400</option>
-          <option value="800">Ton Elo + 800</option>
-          <option value="max">Maximum</option>
-        </select>
-      </div>
-      <div class="field">
         <label for="sound">Bruits des pièces</label>
         <select id="sound"><option value="on">Activés</option><option value="off">Coupés</option></select>
       </div>
@@ -458,7 +449,7 @@ td:last-child { text-align: right; }
     <p id="status" role="status" data-v="analyse"></p>
     <div id="strip" data-v="analyse" aria-label="Coups de la partie"></div>
     <div id="guide" data-v="analyse">
-      <button class="btn" id="guide-start" type="button">Rejouer à partir d’ici, avec un niveau supérieur</button>
+      <button class="btn" id="guide-start" type="button">Rejouer à partir d’ici, au niveau maximal</button>
       <div id="guide-run" hidden>
         <span id="guide-text"></span>
         <button class="ghost" id="guide-exit" type="button">Retour à la partie</button>

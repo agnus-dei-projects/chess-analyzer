@@ -212,7 +212,7 @@ function negative(ctx) {
   if (after.score.type === 'mate' && after.score.value * sign < 0) {
     const n = Math.abs(after.score.value);
     out.push(n === 1 ? `Ça permet un mat immédiat : ${tok(r ? r.m.san : '')}.` : `Ça permet un mat forcé en ${n} coups : ${lineOf(steps, 5)}.`);
-    return { out, r };
+    return { out, r, mate: true };
   }
   if (!r) return { out, r };
   const trap = trapSentence(ply, mover, steps);
@@ -235,7 +235,7 @@ function negative(ctx) {
       out.push(`Ça coûte du matériel : ${lineOf(steps, 4)}.`);
     }
     if (lost && (lost !== said || won)) out.push(`Au final, ${side(mover)} perdent ${lost}${won ? ` contre ${won}` : ''}.`);
-    return { out, r };
+    return { out, r, told: -ex.net, vague: !said && !trap };
   }
   if (lineLoss >= 0) return { out, r }; // sans perte réelle, un motif tactique n'explique rien
   const fork = targets(r.fen, r.m.to);
@@ -245,7 +245,7 @@ function negative(ctx) {
   const promo = steps.slice(0, 8).find((s) => s.m.promotion && s.m.color !== mover);
   if (promo) { out.push(`Ça laisse l’adversaire promouvoir : ${lineOf(steps, 5)}.`); return { out, r }; }
   const checks = steps.slice(0, 6).filter((s) => s.m.color !== mover && s.m.san.includes('+')).length;
-  if (checks >= 2 && lineLoss <= -3) { out.push(`${cap(the('k', mover))} subit une série d’échecs : ${lineOf(steps, 5)}.`); return { out, r }; }
+  if (checks >= 2 && lineLoss <= -3) { out.push(`${cap(the('k', mover))} subit une série d’échecs : ${lineOf(steps, 5)}.`); return { out, r, vague: true }; }
   return { out, r };
 }
 
@@ -307,6 +307,9 @@ function threatFragment(first, threat, mover, score, reply) {
   if (ifPass - base < 40) return null; // l'adversaire n'a pas besoin d'y répondre
   // Une pièce attaquée qui s'écarte au coup suivant : la menace seule n'explique rien.
   if (m.captured && reply && reply.m.from === m.to) return null;
+  const forked = m.san.includes('+') ? targets(steps[0].fen, m.to).filter((t) => t.type !== 'p') : [];
+  if (forked.length >= 2 && lineDelta(threat.fen, steps, mover, 4) >= 2) return `ça menace ${tok(m.san)}, une fourchette sur ${FEM[forked[0].type] ? 'la' : 'le'} ${NAME[forked[0].type]} et ${FEM[forked[1].type] ? 'la' : 'le'} ${NAME[forked[1].type]}`;
+  if (m.captured && V[m.captured] < 3) return null; // menacer un pion n'explique pas un coup
   if (m.captured && exchange(steps, mover).net > 0 && lineDelta(threat.fen, steps, mover, 4) >= 1) return `ça menace de prendre ${the(m.captured, opp(mover))} en ${tok(m.to)}`;
   if (m.promotion) return 'ça menace de promouvoir le pion';
   return null;
@@ -585,7 +588,7 @@ export function narrate(startFen, steps, mover, { max = 8, mateIn = 0, winning =
   let end = -1; let mate = false;
   for (let i = 1; i < steps.length && i <= max; i += 1) {
     const s = steps[i];
-    parts.push(clause(s, steps[i - 1], { own: s.m.color === mover, first: i === 1 }));
+    parts.push(clause(s, steps[i - 1], { own: s.m.color === mover, first: i === 1 && s.m.color !== mover }));
     if (s.m.san.endsWith('#')) { end = i; mate = s.m.color === mover; break; }
     const next = steps[i + 1];
     const bal = materialFor(s.fen, mover) - base;
@@ -710,6 +713,9 @@ function storyOf(fenBefore, steps, before, mover) {
   return n ? { ...n, sac: false } : null;
 }
 
+// Un long récit ne se justifie que par un vrai enjeu : mat, sacrifice, ou gain d'au moins une pièce.
+const worth = (st) => !!st && (st.mate || st.sac || st.end <= 4 || st.net >= 2);
+
 function withStory(reason, st) {
   if (!st || !st.text) return reason;
   const tail = st.outcome ? `${st.text}, et ${st.outcome}` : st.text;
@@ -788,7 +794,7 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
     const st = settle(showy || (strong && /^ça gagne|^ça force le mat|tombe|en même temps/.test(strong)) ? storyOf(fenBefore, playedLine, before, mover) : null, before.score, mover, false);
     // Le récit n'est ajouté que s'il apporte une étape : sacrifice, ou gain et mat qui n'arrivent pas tout de suite.
     // Avec une raison déjà dite, il doit aller jusqu'au bout (mat ou gain), sinon il s'arrêterait en l'air.
-    const tell = st && st.text && (strong && !st.sac ? st.later && !st.open : st.sac || st.later || (showy && st.open));
+    const tell = st && st.text && worth(st) && (strong && !st.sac ? st.later && !st.open : st.sac || st.later || (showy && st.open));
     const keep = strong && /en même temps/.test(strong);
     const said = tell ? withStory(strong && !st.sac ? strong : '', strong && !st.sac && !keep ? { ...st, outcome: '' } : st) : chosen;
     const details = showy || tell ? buildDetails({ fenBefore, mover, bestSteps: playedLine, playedLine, before, after, played: true, story: tell ? sentence(`En mots : ${withStory('', st)}`) : '' }) : null;
@@ -796,7 +802,19 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
   }
 
   const neg = negative({ fenBefore, fenAfter, ply, after, mover });
-  const reasons = move.loss >= 5 ? neg.out : [];
+  let reasons = move.loss >= 5 ? neg.out : [];
+  // La réfutation racontée jusqu'à son résultat, quand la phrase courte n'en dit pas assez.
+  let refuted = false;
+  if (move.loss >= 5 && !neg.mate) {
+    const foe = opp(mover);
+    const sgn = foe === 'w' ? 1 : -1;
+    const R0 = narrate(fenBefore, playedLine, foe, { max: 7, mateIn: after.score.type === 'mate' && after.score.value * sgn > 0 ? after.score.value * sgn : 0 });
+    const R = settle(R0, after.score, foe, false);
+    if (R && R.text && !R.open && (R.mate || (R.outcome && !/équilibrée/.test(R.outcome) && R.net >= 1)) && (!reasons.length || neg.vague || R.net >= (neg.told || 0) + 2)) {
+      reasons = [sentence(`après ce coup, ${withStory('', R)}`)];
+      refuted = true;
+    }
+  }
   const bestSteps = walk(fenBefore, before.pv && before.pv.length ? before.pv : [before.best]);
   const playedRecapture = !!(ply.captured && prev && prev.captured && prev.to === ply.to);
   const why = bestSteps.length
@@ -806,7 +824,7 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
   const GENERAL = /l’abri|sort une pièce|place au centre|colonne|rapproche un pion|chaque échange/;
   const proven = why.filter((t) => !GENERAL.test(t));
   const general = why.filter((t) => GENERAL.test(t));
-  if (!proven.length && neg.r && move.loss >= 5) {
+  if (!proven.length && neg.r && move.loss >= 5 && !refuted && !neg.mate) {
     const r = neg.r;
     const hit = r.m.captured ? [] : targets(r.fen, r.m.to).filter((t) => t.type !== 'k' && V[t.type] >= 3);
     if (r.m.captured || hit[0]) proven.push(`sinon ${side(opp(mover))} jouent ${tok(r.m.san)}${hit[0] ? `, qui attaque ${the(hit[0].type, hit[0].color)} en ${tok(hit[0].square)}` : ''}`);
@@ -824,11 +842,17 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
     return { sentences: [special, chosen ? sentence(chosen) : ''].filter(Boolean), notes: [`Légèrement mieux : ${action}.`], line, key: keyOf(chosen || '') };
   }
   // Sans raison prouvée, on décrit l'effet du coup conseillé sans le présenter comme une preuve.
-  const effect = !proven[0] ? purposes({ fenBefore, steps: bestSteps, mover, prev }).find((t) => !/^l’idée|^la réponse/.test(t)) || general[0] : '';
+  // Rien de concret à reprocher au coup joué : on nomme au moins la réponse qui le punit.
+  if (!reasons.length && neg.r && move.loss >= 10 && !proven.length) reasons = [`Ça laisse à l’adversaire sa meilleure réponse, ${tok(neg.r.m.san)}.`];
+  // Le coup conseillé rend-il impossible la réponse qui punissait le coup joué ?
+  const stops = neg.r && (refuted || neg.mate) && !new Chess(bestSteps[0].fen).moves({ verbose: true }).some((x) => x.from === neg.r.m.from && x.to === neg.r.m.to)
+    ? `ça empêche ${tok(neg.r.m.san)}` : '';
+  const effect = !proven[0] ? stops || purposes({ fenBefore, steps: bestSteps, mover, prev }).find((t) => !/^l’idée|^la réponse/.test(t)) || general[0] : '';
   let better;
   if (st && st.sac && st.text) better = `Mieux valait ${action} : ${withStory('', st)}.`;
   else if (st && st.text && st.later && !st.open && proven[0] && /en même temps/.test(proven[0])) better = `Mieux valait ${action} : ${proven[0]}. ${cap(withStory('', st))}.`;
-  else if (st && st.text && st.later && !st.open && proven[0] && /^ça gagne|^ça force le mat|tombe/.test(proven[0])) better = `Mieux valait ${action}, car ${withStory(proven[0], { ...st, outcome: '' })}.`;
+  else if (st && st.text && st.later && !st.open && worth(st) && proven[0] && /^ça gagne|^ça force le mat|tombe/.test(proven[0])) better = `Mieux valait ${action}, car ${withStory(proven[0], { ...st, outcome: '' })}.`;
+  else if (st && st.text && st.later && !st.open && !refuted && st.end <= 5 && (st.mate || (st.outcome && !/équilibrée/.test(st.outcome))) && !/à la fois|cloue|défenseur|menace un mat|une fourchette/.test(proven[0] || '')) better = `Mieux valait ${action} : ${withStory('', st)}.`;
   else better = `Mieux valait ${action}${proven[0] ? `, car ${proven[0]}` : effect ? ` : ${effect}` : ''}.`;
   // Sans défaut concret dans le coup joué : on dit ce qui était en jeu.
   if (!reasons.length && !special && deficit && st && st.text && st.outcome && st.later && !st.open && st.net >= 2 && move.loss >= 10) {
