@@ -416,6 +416,21 @@ td:last-child { text-align: right; }
       </div>
     </div>
     <details class="panel" data-v="parties">
+      <summary>Signalements <span id="reports-count"></span></summary>
+      <div class="stack">
+        <p class="v-text" id="reports-info"></p>
+        <div class="inline">
+          <button class="btn" type="button" id="reports-copy">Tout copier</button>
+          <button class="ghost" type="button" id="reports-clear">Vider</button>
+        </div>
+        <div class="field">
+          <label for="gh-token">Envoi automatique : jeton GitHub (facultatif)</label>
+          <input type="password" id="gh-token" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="github_pat_…">
+        </div>
+        <p class="v-hint" id="reports-status"></p>
+      </div>
+    </details>
+    <details class="panel" data-v="parties">
       <summary>Coller un PGN</summary>
       <form class="stack" id="pgn-form">
         <label for="pgn">PGN d’une partie terminée</label>

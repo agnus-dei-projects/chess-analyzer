@@ -29,15 +29,23 @@ export function sanToSpeech(t) {
 
 const parseUci = (u) => ({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] });
 
+// Les mêmes variantes sont relues par plusieurs règles : le résultat est gardé en mémoire (lecture seule).
+const walked = new Map();
 export function walk(fen, ucis, max = 14) {
+  const list = (ucis || []).slice(0, max);
+  const key = `${fen}|${list.join(' ')}`;
+  const hit = walked.get(key);
+  if (hit) return hit;
   const c = new Chess(fen);
   const steps = [];
-  for (const u of (ucis || []).slice(0, max)) {
+  for (const u of list) {
     try {
       const m = c.move(parseUci(u));
       steps.push({ m, fen: c.fen() });
     } catch { break; }
   }
+  if (walked.size > 400) walked.clear();
+  walked.set(key, steps);
   return steps;
 }
 
@@ -195,6 +203,8 @@ function trapSentence(ply, mover, steps) {
     const s = steps[i];
     if (!s) break;
     if (steps.slice(0, i + 1).some((x) => x.m.from === ply.to || x.m.to === ply.to)) break;
+    // Le calcul des cases de fuite est coûteux : inutile si la suite ne prend jamais une pièce de ce type.
+    if (!steps.slice(i, i + 10).some((x) => x.m.color !== mover && x.m.captured)) continue;
     const t = trappedAt(s.fen, ply.to);
     const lost = steps.slice(i, i + 10).some((x) => x.m.color !== mover && x.m.captured === t?.piece.type);
     if (t && lost) return `${cap(the(t.piece.type, mover))} en ${tok(ply.to)} est ${t.attacked ? 'piégé' : 'bloqué'}${FEM[t.piece.type] ? 'e' : ''} : ${ELLE(t.piece.type)} n’a plus aucune case sûre.`;
@@ -629,6 +639,7 @@ function purposes({ fenBefore, steps, mover, prev }) {
 export function enPrise(m) {
   if (!'nbrq'.includes(m.piece) || m.promotion) return null;
   const c = new Chess(m.after);
+  if (!c.attackers(m.to, opp(m.color)).length) return null;
   const caps = c.moves({ verbose: true }).filter((x) => x.to === m.to && x.captured);
   if (!caps.length) return null;
   const defended = c.attackers(m.to, m.color).length > 0;
@@ -933,7 +944,7 @@ function explainMoveInner({ fenBefore, fenAfter, ply, before, after, move, index
       // Seulement si le moteur juge la position nettement défavorable : sinon ce n'est qu'une suite d'échanges.
       const bad = after.score.type === 'mate' ? after.score.value * sign < 0 : after.score.value * sign <= -100;
       if (bad && L && L.text && !L.open && (L.mate || (L.outcome && !/équilibrée/.test(L.outcome) && L.net >= 2))) {
-        const details = buildDetails({ fenBefore, mover, bestSteps: playedLine, playedLine, before: ref, after, played: true, story: '' });
+        const details = () => buildDetails({ fenBefore, mover, bestSteps: playedLine, playedLine, before: ref, after, played: true, story: '' });
         const tail = L.end <= 5 ? withStory('', L) : (L.outcome ? `${L.outcome} dans la suite` : 'le mat suit');
         return { sentences: [sentence(`c’est le moindre mal : ${tail}`)], notes: [], line: lineOf(playedLine.slice(1), 4), key: 'moindre-mal', details };
       }
@@ -946,7 +957,7 @@ function explainMoveInner({ fenBefore, fenAfter, ply, before, after, move, index
     const tell = st && st.text && worth(st) && (strong && !st.sac ? st.later && !st.open : st.sac || st.later || (showy && st.open));
     const keep = strong && /en même temps/.test(strong);
     const said = tell ? withStory(strong && !st.sac ? strong : '', strong && !st.sac && !keep ? { ...st, outcome: '' } : st) : chosen;
-    const details = showy || tell ? buildDetails({ fenBefore, mover, bestSteps: playedLine, playedLine, before: ref, after, played: true, story: tell ? sentence(`En mots : ${withStory('', st)}`) : '' }) : null;
+    const details = showy || tell ? () => buildDetails({ fenBefore, mover, bestSteps: playedLine, playedLine, before: ref, after, played: true, story: tell ? sentence(`En mots : ${withStory('', st)}`) : '' }) : null;
     return { sentences: [special, said ? sentence(said) : ''].filter(Boolean), notes: [], line: lineOf(playedLine.slice(1), 4), key: keyOf(chosen || ''), details };
   }
 
@@ -1051,6 +1062,6 @@ function explainMoveInner({ fenBefore, fenAfter, ply, before, after, move, index
     notes: [proven[1] ? `Et ${proven[1]}.` : '', !grave && general[0] && general[0] !== effect ? `Idée générale : ${general[0]}.` : ''].filter(Boolean),
     line,
     key: '',
-    details: buildDetails({ fenBefore, mover, bestSteps, playedLine, before, after, played: false, story: st && st.text && (st.sac || st.later || st.open) ? sentence(`En mots : ${withStory('', st)}`) : '' }),
+    details: () => buildDetails({ fenBefore, mover, bestSteps, playedLine, before, after, played: false, story: st && st.text && (st.sac || st.later || st.open) ? sentence(`En mots : ${withStory('', st)}`) : '' }),
   };
 }

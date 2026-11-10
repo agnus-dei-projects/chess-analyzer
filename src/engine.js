@@ -3,7 +3,8 @@ import { MATE_CP, parseInfo } from './analysis.js';
 // Stockfish (version à un seul fil) est servi en fichiers à part, mis en cache par le service worker :
 // la page reste légère et le navigateur garde le code compilé d'une ouverture à l'autre.
 // Le multi-fil de Stockfish a été écarté : à profondeur fixe, il double le calcul sans finir plus tôt.
-const URL_SF = new URL('sf/stockfish-19-lite-single.js', location.href).href;
+// Le moteur est chargé par une enveloppe (sf/engine.js) qui ne transmet que les lignes utiles.
+const URL_SF = new URL('sf/engine.js', location.href).href;
 
 // Nombre de moteurs pour analyser une partie : chacun prend des positions différentes.
 // Même quantité de calcul au total, terminée plus vite sur un téléphone à plusieurs cœurs.

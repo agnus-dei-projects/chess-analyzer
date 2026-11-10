@@ -1,13 +1,8 @@
 // Tests permanents des commentaires : chaque position signalée est rejouée comme dans l'appli
 // (profondeur 14, menace, suites prolongées, sondes « pourquoi pas ? ») puis le commentaire est contrôlé.
 // Usage : node tests/run.mjs [filtre] [--show]. Les calculs du moteur sont gardés dans tests/engine-cache.json.
-import { spawn } from 'child_process'; import fs from 'fs'; import path from 'path'; import { fileURLToPath } from 'url';
-import esbuild from 'esbuild'; import { Chess } from 'chess.js';
-const here = path.dirname(fileURLToPath(import.meta.url)); const root = path.join(here, '..');
-const tmp = fs.mkdtempSync('/tmp/cases-');
-await esbuild.build({ entryPoints: [path.join(root, 'src/explain.js')], bundle: true, format: 'esm', platform: 'node', outfile: tmp + '/ex.mjs', logLevel: 'error' });
-await esbuild.build({ entryPoints: [path.join(root, 'src/analysis.js')], bundle: true, format: 'esm', platform: 'node', outfile: tmp + '/an.mjs', logLevel: 'error' });
-const X = await import(tmp + '/ex.mjs'); const A = await import(tmp + '/an.mjs');
+import { spawn } from 'child_process'; import fs from 'fs'; import path from 'path'; import { Chess } from 'chess.js';
+import { X, A, here, root } from './lib.mjs';
 const args = process.argv.slice(2); const show = args.includes('--show'); const filter = args.find((a) => !a.startsWith('--'));
 const CASES = JSON.parse(fs.readFileSync(path.join(here, 'cases.json'))).filter((c) => !filter || c.name.includes(filter));
 const CACHE = path.join(here, 'engine-cache.json'); const cache = fs.existsSync(CACHE) ? JSON.parse(fs.readFileSync(CACHE)) : {};

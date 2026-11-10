@@ -8,7 +8,7 @@ const out = r('src/template.html').toString()
   .replace('/*CHESSGROUND*/', () => css)
   .replace('/*BUNDLE*/', () => js);
 const crypto = require('crypto');
-const version = crypto.createHash('sha1').update(out).update(r('pwa/sw.js')).update(r('src/maia.js')).update(r('src/maia-worker.js')).update(r('node_modules/stockfish/package.json')).digest('hex').slice(0, 10);
+const version = crypto.createHash('sha1').update(out).update(r('pwa/sw.js')).update(r('src/engine-worker.js')).update(r('src/maia.js')).update(r('src/maia-worker.js')).update(r('node_modules/stockfish/package.json')).digest('hex').slice(0, 10);
 fs.mkdirSync('dist/app', { recursive: true });
 fs.writeFileSync('dist/app/index.html', out);
 for (const f of fs.readdirSync('pwa')) {
@@ -17,7 +17,11 @@ for (const f of fs.readdirSync('pwa')) {
 }
 // Stockfish et polices : fichiers à part, mis en cache par le service worker.
 fs.mkdirSync('dist/app/sf', { recursive: true });
-for (const f of ['stockfish-19-lite-single']) for (const ext of ['.js', '.wasm']) fs.copyFileSync(`node_modules/stockfish/bin/${f}${ext}`, `dist/app/sf/${f}${ext}`);
+fs.rmSync('dist/app/sf', { recursive: true, force: true });
+fs.mkdirSync('dist/app/sf', { recursive: true });
+fs.copyFileSync('src/engine-worker.js', 'dist/app/sf/engine.js');
+fs.copyFileSync('node_modules/stockfish/bin/stockfish-19-lite-single.js', 'dist/app/sf/stockfish.js');
+fs.copyFileSync('node_modules/stockfish/bin/stockfish-19-lite-single.wasm', 'dist/app/sf/engine.wasm');
 fs.mkdirSync('dist/app/fonts', { recursive: true });
 for (const [pkg, file] of [['young-serif', 'young-serif-400'], ['instrument-sans', 'instrument-sans-400'], ['instrument-sans', 'instrument-sans-500'], ['instrument-sans', 'instrument-sans-600'], ['jetbrains-mono', 'jetbrains-mono-400'], ['jetbrains-mono', 'jetbrains-mono-600']]) {
   const w = file.split('-').pop();

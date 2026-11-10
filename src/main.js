@@ -139,19 +139,27 @@ function renderBadge(ply, judged) {
   b.style.top = `${row * 12.5 + 0.4}%`;
 }
 
-function explanation(i) {
+// Chaque explication évite la formule du coup précédent du même camp, donc dépend de toutes les précédentes.
+// Pour un saut loin dans la partie, on ne remonte que de deux crans : le résultat est affiché tout de suite
+// sans être gardé ; la préparation en arrière-plan (warmExplanations) fournit ensuite la version définitive.
+const provisional = new WeakSet();
+function explanation(i, depth = 0) {
   const { game, evals, report } = state;
   const move = report && report.moves[i];
   if (!move || move.pending) return null;
   if (state.exCache.has(i)) return state.exCache.get(i);
-  // On évite de répéter la même formule que le coup précédent du même camp.
-  const previous = i >= 2 ? explanation(i - 2) : null;
+  let previous = null; let unsure = false;
+  if (i >= 2) {
+    if (state.exCache.has(i - 2) || depth < 2 || state.variation) previous = explanation(i - 2, depth + 1);
+    else unsure = !!(report.moves[i - 2] && !report.moves[i - 2].pending);
+    if (previous && provisional.has(previous)) unsure = true;
+  }
   const avoid = previous ? previous.key : null;
   try {
     const out = explainMove({
       fenBefore: game.fens[i], fenAfter: game.fens[i + 1], ply: game.plies[i], before: evals[i], after: evals[i + 1], move, index: i, prev: game.plies[i - 1], avoid,
     });
-    state.exCache.set(i, out);
+    if (unsure) provisional.add(out); else state.exCache.set(i, out);
     return out;
   } catch (err) {
     console.warn(err);
@@ -198,19 +206,27 @@ function renderVerdict() {
       box.style.setProperty('--sheet-top', `${Math.round($('board').getBoundingClientRect().bottom + 6)}px`);
       if (!more.open) leavePreview();
     });
-    if (ex.details.key) more.append(h('p', { class: 'v-key' }, display(ex.details.key)));
-    more.append(h('p', { class: 'v-hint' }, 'Touche un coup pour le voir sur l’échiquier.'));
-    ex.details.blocks.forEach((b) => {
-      const list = h('ol', { class: 'v-steps' });
-      const show = (k) => showStep(b, k, list);
-      list.append(...b.lines.map((l, k) => h('li', {}, h('button', { type: 'button', class: 'v-step', onclick: () => show(k) }, display(l.text)))));
-      more.append(h('div', { class: 'v-blk' }, h('span', {}, b.title),
-        h('button', { type: 'button', class: 'ghost v-play', onclick: () => playLine(b, list) }, '▶ Dérouler')));
-      more.append(list);
-      more.append(h('p', { class: 'v-tally' }, b.tally));
-    });
-    more.append(h('p', { class: 'v-tally' }, ex.details.compare));
-    more.append(h('button', { type: 'button', class: 'ghost v-back', onclick: () => leavePreview() }, 'Revenir à la position de la partie'));
+    // Le contenu du panneau n'est calculé qu'à la première ouverture.
+    let filled = false;
+    const fill = () => {
+      if (filled) return;
+      filled = true;
+      const d = ex.details();
+      if (d.key) more.append(h('p', { class: 'v-key' }, display(d.key)));
+      more.append(h('p', { class: 'v-hint' }, 'Touche un coup pour le voir sur l’échiquier.'));
+      d.blocks.forEach((b) => {
+        const list = h('ol', { class: 'v-steps' });
+        const show = (k) => showStep(b, k, list);
+        list.append(...b.lines.map((l, k) => h('li', {}, h('button', { type: 'button', class: 'v-step', onclick: () => show(k) }, display(l.text)))));
+        more.append(h('div', { class: 'v-blk' }, h('span', {}, b.title),
+          h('button', { type: 'button', class: 'ghost v-play', onclick: () => playLine(b, list) }, '▶ Dérouler')));
+        more.append(list);
+        more.append(h('p', { class: 'v-tally' }, b.tally));
+      });
+      more.append(h('p', { class: 'v-tally' }, d.compare));
+      more.append(h('button', { type: 'button', class: 'ghost v-back', onclick: () => leavePreview() }, 'Revenir à la position de la partie'));
+    };
+    more.addEventListener('toggle', () => { if (more.open) fill(); });
     body.append(more);
   }
   if (ex.line) body.append(h('p', { class: 'v-line' }, 'Suite prévue : ', display(ex.line)));
@@ -220,27 +236,78 @@ function renderVerdict() {
   box.append(body);
 }
 
-// Copie tout ce qu'il faut pour reproduire un commentaire douteux : position exacte, coup, texte, calculs du moteur.
+// Signalements : tout ce qu'il faut pour reproduire un commentaire douteux (position exacte, coup, texte,
+// calculs du moteur). Ils sont gardés sur l'appareil ; avec un jeton GitHub (réglages), ils sont aussi
+// envoyés comme tickets du dépôt, où ils sont relus par lots. Le jeton ne quitte jamais cet appareil.
+const REPORT_REPO = 'agnus-dei-projects/chess-analyzer';
+const reports = {
+  list: (() => { try { return JSON.parse(store.get('reports') || '[]'); } catch { return []; } })(),
+  save() { store.set('reports', JSON.stringify(this.list.slice(-200))); renderReports(); },
+  pending() { return this.list.filter((r) => !r.sent); },
+};
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {
+    const ta = h('textarea', { style: 'position:fixed;opacity:0' });
+    ta.value = text; document.body.append(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    ta.remove();
+    return ok;
+  }
+}
+
+// Envoie les signalements en attente. Renvoie le nombre envoyé, ou −1 si le jeton est refusé.
+let sending = null;
+function flushReports() {
+  const token = store.get('gh-token');
+  if (!token || sending) return sending || Promise.resolve(0);
+  sending = (async () => {
+    let n = 0;
+    for (const r of reports.pending()) {
+      let res;
+      try {
+        res = await fetch(`https://api.github.com/repos/${REPORT_REPO}/issues`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: `[Signalement] ${r.data.coup} — ${r.data.classement}`, body: `${r.data.commentaire}\n\n\`\`\`json\n${JSON.stringify(r.data)}\n\`\`\`` }),
+        });
+      } catch { break; } // hors ligne : on réessaiera
+      if (res.status === 201) { r.sent = true; n += 1; reports.save(); } else { reports.status = res.status === 401 || res.status === 403 || res.status === 404 ? 'Jeton refusé par GitHub : vérifie qu’il donne accès aux tickets du dépôt.' : `GitHub a répondu ${res.status}.`; renderReports(); return -1; }
+    }
+    reports.status = '';
+    renderReports();
+    return n;
+  })().finally(() => { sending = null; });
+  return sending;
+}
+
+function renderReports() {
+  const wait = reports.pending().length; const sent = reports.list.length - wait;
+  $('reports-count').textContent = wait ? `(${wait} en attente)` : '';
+  $('reports-info').textContent = `${wait} en attente${sent ? `, ${sent} déjà envoyé${sent > 1 ? 's' : ''}` : ''}. ${store.get('gh-token') ? 'Envoi automatique activé.' : 'Sans jeton, « Tout copier » les met dans le presse-papiers en un seul bloc.'}`;
+  $('reports-status').textContent = reports.status || '';
+  $('reports-copy').disabled = !wait;
+}
+
 async function reportComment(i, ex, btn) {
   const { game, report } = state;
   const m = report.moves[i];
   const slim = (ev) => ev && { score: ev.score, best: ev.best, pv: ev.pv, second: ev.second, threat: ev.threat, ifTaken: ev.ifTaken, afterRef: ev.afterRef, noRecapture: ev.noRecapture };
-  const text = `Signalement Chess Analyzer\n${JSON.stringify({
+  const p = game.plies[i - 1];
+  const data = {
     coup: `${Math.floor(i / 2) + 1}${game.plies[i].color === 'w' ? '.' : '…'}${game.plies[i].san}`,
     classement: m.kind,
     commentaire: [...ex.sentences, ...ex.notes].join(' ').replace(/\[\[|\]\]/g, ''),
-    fen: game.fens[i], uci: game.plies[i].uci, prev: game.plies[i - 1] ? game.plies[i - 1].uci : null,
+    fen: game.fens[i], uci: game.plies[i].uci, prev: p ? { uci: p.uci, to: p.to, captured: p.captured || null } : null,
     profondeur: +$('depth').value, rejoue: !!state.variation,
     avant: slim(state.evals[i]), apres: slim(state.evals[i + 1]),
-  })}`;
-  let ok = false;
-  try { await navigator.clipboard.writeText(text); ok = true; } catch {
-    const ta = h('textarea', { style: 'position:fixed;opacity:0' });
-    ta.value = text; document.body.append(ta); ta.select();
-    try { ok = document.execCommand('copy'); } catch { ok = false; }
-    ta.remove();
-  }
-  btn.textContent = ok ? 'Copié : colle-le dans la conversation' : 'Copie impossible sur ce navigateur';
+  };
+  if (!reports.list.some((r) => r.data.fen === data.fen && r.data.uci === data.uci && r.data.commentaire === data.commentaire)) reports.list.push({ at: Date.now(), sent: false, data });
+  reports.save();
+  const n = store.get('gh-token') ? await flushReports() : 0;
+  const wait = reports.pending().length;
+  btn.textContent = n > 0 && !wait ? 'Signalement envoyé' : `Signalement enregistré (${wait} en attente)`;
   setTimeout(() => { if (btn.isConnected) btn.textContent = 'Signaler ce commentaire'; }, 4000);
 }
 
@@ -1154,6 +1221,17 @@ $('prev').addEventListener('click', () => go(state.cursor - 1, true));
 $('next').addEventListener('click', stepForward);
 $('last').addEventListener('click', () => go(1e4, true));
 $('guide-start').addEventListener('click', startVariation);
+$('reports-copy').addEventListener('click', async () => {
+  const list = reports.pending().map((r) => r.data);
+  const ok = await copyText(`Signalements Chess Analyzer (${list.length})\n${JSON.stringify(list)}`);
+  reports.status = ok ? `${list.length} signalement${list.length > 1 ? 's' : ''} copié${list.length > 1 ? 's' : ''} : colle le bloc dans la conversation, puis « Vider ».` : 'Copie impossible sur ce navigateur.';
+  renderReports();
+});
+$('reports-clear').addEventListener('click', () => { reports.list = []; reports.status = ''; reports.save(); });
+$('gh-token').value = store.get('gh-token') || '';
+$('gh-token').addEventListener('change', (e) => { store.set('gh-token', e.target.value.trim()); reports.status = ''; renderReports(); flushReports(); });
+renderReports();
+if (reports.pending().length) flushReports();
 $('sound').value = fx.enabled() ? 'on' : 'off';
 $('sound').addEventListener('change', (e) => fx.setEnabled(e.target.value === 'on'));
 $('guide-exit').addEventListener('click', exitVariation);

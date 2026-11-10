@@ -2,7 +2,7 @@
 const CACHE = 'chess-analyzer-__VERSION__';
 const MAIA = 'chess-analyzer-maia-5m-v1'; // conservé d'une version à l'autre : 22 Mo à ne pas retélécharger
 const FONTS = ['young-serif-400', 'instrument-sans-400', 'instrument-sans-500', 'instrument-sans-600', 'jetbrains-mono-400', 'jetbrains-mono-600'].map((f) => `fonts/${f}.woff2`);
-const SF = ['sf/stockfish-19-lite-single.js', 'sf/stockfish-19-lite-single.wasm'];
+const SF = ['sf/engine.js', 'sf/stockfish.js', 'sf/engine.wasm'];
 const FILES = ['./', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', ...FONTS, ...SF];
 
 self.addEventListener('install', (e) => {

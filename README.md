@@ -26,4 +26,13 @@ Problèmes : [base de problèmes Lichess](https://database.lichess.org/) (CC0), 
 
 ## Tests des commentaires
 
-`node tests/run.mjs` rejoue chaque position signalée (`tests/cases.json`) comme dans l'appli et contrôle le commentaire produit. `node tests/replay.mjs fichier.txt` rejoue un signalement copié depuis le bouton « Signaler ce commentaire ».
+`npm test` lance deux contrôles, à faire passer avant toute mise en ligne :
+
+- `tests/run.mjs` rejoue chaque position signalée (`tests/cases.json`) comme dans l'appli et vérifie ce que le commentaire doit dire et ne doit plus dire.
+- `tests/corpus.mjs` recalcule les commentaires de 16 parties analysées (`tests/corpus/states.json`), vérifie des règles valables pour tout commentaire, et compare chaque texte à la version validée (`tests/corpus/snapshot.json`). Tout changement est listé dans `tests/corpus/diff.txt` pour relecture ; `node tests/corpus.mjs --accept` l'enregistre ensuite.
+
+## Signalements
+
+Le bouton « Signaler ce commentaire » garde le signalement sur l'appareil (réglages, « Signalements »). « Tout copier » les exporte en un bloc. Avec un jeton GitHub limité aux tickets de ce dépôt, saisi dans les réglages et gardé sur l'appareil, ils sont envoyés comme tickets « [Signalement] ».
+
+`node tests/signalements.mjs --github` (ou un fichier contenant le bloc copié) rejoue chaque signalement avec les calculs du moteur tels que l'appli les avait.
