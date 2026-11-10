@@ -1,12 +1,140 @@
 [
-  { "name": "19.g3 — pion g2 cloué, f4 chasse la dame", "fen": "r3k2r/1p1n1p1p/2p3p1/p2pP1q1/3P4/2NB3b/PPQ1RPP1/4R1K1 w kq - 0 19", "uci": "g2g3",
-    "must": ["\\[\\[f4\\]\\]", "cloue"], "mustNot": [] },
-  { "name": "6.e3 — Cd5 double menace, matériel à rattraper", "fen": "r1b1kbnr/pppp1ppp/2n5/4P3/5q2/2N2N2/PPP1PPPP/R2QKB1R w KQkq - 0 6", "uci": "e2e3",
-    "must": ["en même temps \\[\\[Nxc7\\+\\]\\]", "fourchette"], "mustNot": ["car ça menace de prendre la dame"] },
-  { "name": "11.Cxd7 — simple échange, pas une fourchette", "fen": "r1b1qrk1/ppbn2pp/2p1pn2/2PpNp2/3P1B2/3BP3/PP1N1PPP/R2Q1RK1 w - - 0 11", "uci": "e5d7",
-    "must": ["échange les cavaliers"], "mustNot": ["fourchette", "menace"] },
-  { "name": "14.Ce5 — d4 surchargé, Cxc5 gagne un pion", "fen": "r1b2rk1/ppq3pp/2p1p3/2Pp1p2/3Pn3/3BPN2/PP3PPP/R2Q1RK1 w - - 0 14", "uci": "f3e5",
-    "must": ["\\[\\[c5\\]\\]", "reprend", "\\[\\[e5\\]\\]"], "mustNot": ["déjà menacé", "double les pions"] },
-  { "name": "23.Cxc8 — Dh3 menace mat, pion g2 cloué", "fen": "2r4k/4N1pp/1p2p1rq/3p1p2/1P1Pn3/3BP3/P4PPP/3Q1RK1 w - - 0 23", "uci": "e7c8",
-    "must": ["\\[\\[Qh3\\]\\]", "menace mat", "cloué"], "mustNot": ["double les pions"] }
+ {
+  "name": "19.g3 — pion g2 cloué, f4 chasse la dame",
+  "fen": "r3k2r/1p1n1p1p/2p3p1/p2pP1q1/3P4/2NB3b/PPQ1RPP1/4R1K1 w kq - 0 19",
+  "uci": "g2g3",
+  "must": [
+   "\\[\\[f4\\]\\]",
+   "cloue"
+  ],
+  "mustNot": []
+ },
+ {
+  "name": "6.e3 — Cd5 double menace, matériel à rattraper",
+  "fen": "r1b1kbnr/pppp1ppp/2n5/4P3/5q2/2N2N2/PPP1PPPP/R2QKB1R w KQkq - 0 6",
+  "uci": "e2e3",
+  "must": [
+   "en même temps \\[\\[Nxc7\\+\\]\\]",
+   "fourchette"
+  ],
+  "mustNot": [
+   "car ça menace de prendre la dame"
+  ]
+ },
+ {
+  "name": "11.Cxd7 — simple échange, pas une fourchette",
+  "fen": "r1b1qrk1/ppbn2pp/2p1pn2/2PpNp2/3P1B2/3BP3/PP1N1PPP/R2Q1RK1 w - - 0 11",
+  "uci": "e5d7",
+  "must": [
+   "échange les cavaliers"
+  ],
+  "mustNot": [
+   "fourchette",
+   "menace"
+  ]
+ },
+ {
+  "name": "14.Ce5 — d4 surchargé, Cxc5 gagne un pion",
+  "fen": "r1b2rk1/ppq3pp/2p1p3/2Pp1p2/3Pn3/3BPN2/PP3PPP/R2Q1RK1 w - - 0 14",
+  "uci": "f3e5",
+  "must": [
+   "\\[\\[c5\\]\\]",
+   "reprend",
+   "\\[\\[e5\\]\\]"
+  ],
+  "mustNot": [
+   "déjà menacé",
+   "double les pions"
+  ]
+ },
+ {
+  "name": "23.Cxc8 — Dh3 menace mat, pion g2 cloué",
+  "fen": "2r4k/4N1pp/1p2p1rq/3p1p2/1P1Pn3/3BP3/P4PPP/3Q1RK1 w - - 0 23",
+  "uci": "e7c8",
+  "must": [
+   "\\[\\[Qh3\\]\\]",
+   "menace mat",
+   "cloué"
+  ],
+  "mustNot": [
+   "double les pions"
+  ]
+ },
+ {
+  "name": "41.Rd3 — Tour échangée — pas un « clouage levé »",
+  "fen": "3N4/2p3p1/R7/5k2/8/p1r3P1/2P4P/2KR4 w - - 6 41",
+  "uci": "d1d3",
+  "must": [],
+  "mustNot": [
+   "tombe",
+   "cloue"
+  ]
+ },
+ {
+  "name": "8.dxc6 — Dames face à face — pas une menace de gain",
+  "fen": "r2qkb1r/1pp1pppp/2n2n2/1p1P1b2/4pB2/2N5/PPP1NPPP/R2QK2R w KQkq - 0 8",
+  "uci": "d5c6",
+  "must": [],
+  "mustNot": [
+   "menace de prendre la dame"
+  ]
+ },
+ {
+  "name": "16…gxf6 — Reprise d'une dame — pas « met le pion à l'abri »",
+  "fen": "1n2k2r/r4pp1/p2p1Q1p/1p6/3pP3/7P/PPP2PP1/R4RK1 b k - 0 16",
+  "uci": "g7f6",
+  "must": [
+   "reprend"
+  ],
+  "mustNot": [
+   "à l’abri"
+  ],
+  "prev": {
+   "to": "f6",
+   "captured": "q",
+   "uci": "f3f6"
+  }
+ },
+ {
+  "name": "23…Qe1+ — Échec perpétuel qui sauve la partie",
+  "fen": "7Q/B1pbkppp/8/3Pp3/2P5/2KP2P1/PP2q2P/8 b - - 1 23",
+  "uci": "e2e1",
+  "must": [
+   "perpétuel"
+  ],
+  "mustNot": []
+ },
+ {
+  "name": "26.Qe8# — Mat joué — pas de « légèrement mieux »",
+  "fen": "5k2/pp1Q2pp/b1n1R3/4p3/8/6P1/PP3P1P/6K1 w - - 4 26",
+  "uci": "d7e8",
+  "must": [
+   "mat"
+  ],
+  "mustNot": [
+   "Légèrement mieux"
+  ]
+ },
+ {
+  "name": "10.Kd1 — Gaffe devant un mat — la parade d'abord",
+  "fen": "rnb3Q1/ppppkp1p/8/8/8/6b1/PPPPN3/RNB1KB1q w Q - 0 10",
+  "uci": "e1d1",
+  "must": [
+   "mat"
+  ],
+  "mustNot": [
+   "pion de moins"
+  ]
+ },
+ {
+  "name": "18…Bxa1 — Capture d'une tour par un camp déjà perdant",
+  "fen": "r1bqk2r/pp1pn2p/5p2/1PnB4/8/P1b2N2/3BQPPP/R3R1K1 b kq - 1 18",
+  "uci": "c3a1",
+  "must": [
+   "gagne une tour"
+  ],
+  "mustNot": [
+   "continuer par"
+  ]
+ }
 ]

@@ -103,7 +103,8 @@ export function buildReport(plies, evals, bookPlies = 0) {
     const moverBefore = ply.color === 'w' ? wb : 100 - wb;
     const moverAfter = ply.color === 'w' ? wa : 100 - wa;
     const loss = Math.max(0, moverBefore - moverAfter);
-    const playedBest = before.best === ply.uci;
+    // Un coup qui mate est le meilleur, même si le moteur en avait choisi un autre.
+    const playedBest = before.best === ply.uci || ply.san.endsWith('#');
     const secondPct = before.second ? (ply.color === 'w' ? winPct(scoreToCp(before.second)) : 100 - winPct(scoreToCp(before.second))) : null;
     const base = classify(loss, playedBest, ply.legal);
     const m = {

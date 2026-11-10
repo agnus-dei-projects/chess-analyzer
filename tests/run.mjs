@@ -19,7 +19,7 @@ const start = async () => { p = spawn('node', [path.join(root, 'node_modules/sto
 const ev = async (fen, depth, only) => { const key = `${fen}|${depth}|${only || ''}`; if (cache[key]) return cache[key]; if (!p) await start(); last = null; await send('ucinewgame'); await send('position fen ' + fen); const l = await send(`go depth ${depth}${only ? ' searchmoves ' + only.join(' ') : ''}`, 'bestmove'); cache[key] = { score: { type: last.type, value: last.value }, pv: last.pv, best: l.split(' ')[1] }; return cache[key]; };
 const mv = (c, u) => c.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] });
 const D = 14; const d = 12;
-export async function analyse(fen, uci) {
+export async function analyse(fen, uci, prev = null) {
   const c = new Chess(fen); const white = c.turn() === 'w'; const legal = c.moves().length;
   const b = await ev(fen, D); const before = { score: A.toWhiteScore(b.score, white), best: b.best, pv: [...b.pv] };
   const m = mv(c, uci); const fenAfter = c.fen();
@@ -40,12 +40,13 @@ export async function analyse(fen, uci) {
   if (first[0] && !first[0].m.san.endsWith('#')) { const ep = X.enPrise(first[0].m); const acc = first[1] && first[1].m.captured && first[1].m.to === first[0].m.to; if (ep && !acc) { const r = await ev(first[0].fen, d, ep.caps); before.ifTaken = { pv: r.pv, score: A.toWhiteScore(r.score, first[0].fen.split(' ')[1] === 'w') }; } }
   const ply = { san: m.san, color: m.color, from: m.from, to: m.to, uci, legal, captured: m.captured, piece: m.piece, sacrifice: X.isSacrifice(m), recapture: false };
   const move = A.buildReport([ply], [before, after], 0).moves[0];
-  const ex = X.explainMove({ fenBefore: fen, fenAfter, ply, before, after, move, index: 20, prev: null, avoid: null });
+  if (prev && m.captured && prev.captured && prev.to === m.to) ply.recapture = true;
+  const ex = X.explainMove({ fenBefore: fen, fenAfter, ply, before, after, move, index: 20, prev, avoid: null });
   return { ex, move, before, after, ply, fenAfter };
 }
 let bad = 0;
 for (const c of CASES) {
-  const { ex, move, before, after, fenAfter } = await analyse(c.fen, c.uci);
+  const { ex, move, before, after, fenAfter } = await analyse(c.fen, c.uci, c.prev || null);
   const text = [...ex.sentences, ...ex.notes].join(' ');
   const miss = (c.must || []).filter((r) => !new RegExp(r).test(text)); const hit = (c.mustNot || []).filter((r) => new RegExp(r).test(text));
   const ok = !miss.length && !hit.length; if (!ok) bad += 1;
