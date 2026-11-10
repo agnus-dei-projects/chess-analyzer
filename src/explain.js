@@ -203,6 +203,47 @@ function trapSentence(ply, mover, steps) {
 }
 
 // Ce qui ne va pas dans un coup, d'après la réfutation.
+const mate2san = (m) => m.san;
+
+// La prise adverse semble pouvoir être reprise, mais la variante ne reprend pas : pourquoi ?
+// Cherche ce que la reprise laisserait prendre (pièce qui n'est plus défendue).
+function whyNoRecapture(r, next, mover) {
+  if (!r.m.captured || (next && next.m.to === r.m.to && next.m.captured)) return null;
+  const c = new Chess(r.fen);
+  const recs = c.moves({ verbose: true }).filter((x) => x.to === r.m.to && x.captured).sort((a, b) => V[a.piece] - V[b.piece]);
+  for (const rc of recs) {
+    const d = new Chess(rc.after);
+    const hits = d.moves({ verbose: true }).filter((x) => x.captured && V[x.captured] >= 3 && x.to !== rc.to
+      && (d.attackers(x.to, mover).length === 0 || V[x.captured] > V[x.piece]));
+    if (!hits.length) continue;
+    const h = hits.sort((a, b) => V[b.captured] - V[a.captured])[0];
+    const loose = d.attackers(h.to, mover).length === 0;
+    return { rc, h, text: `si ${the(rc.piece, mover)} reprend, ${the(h.piece, opp(mover))} prend ${the(h.captured, mover)} en ${tok(h.to)}${loose ? `, qui n’est plus défendu${FEM[h.captured] ? 'e' : ''}` : ''}` };
+  }
+  return null;
+}
+
+// Le coup adverse menace mat au coup suivant : par quel coup, et pourquoi on ne peut pas prendre la pièce.
+function mateThreat(r, mover) {
+  if (r.m.san.includes('+') || r.m.captured) return null;
+  let flipped;
+  try { flipped = new Chess(flipTurn(r.fen), { skipValidation: true }); } catch { return null; }
+  if (flipped.inCheck()) return null;
+  const mate = flipped.moves({ verbose: true }).find((x) => x.san.endsWith('#'));
+  if (!mate) return null;
+  const c = new Chess(r.fen);
+  let pin = null;
+  for (const sq of c.attackers(r.m.to, mover)) {
+    if (c.moves({ verbose: true }).some((x) => x.from === sq && x.to === r.m.to)) return { mate, pin: null, takable: true };
+    for (const p of allPieces(r.fen)) {
+      if (p.color === mover || !'qrb'.includes(p.type)) continue;
+      const pb = pinBy(r.fen, p.square, true);
+      if (pb && pb.pinned.square === sq && pb.behind.type === 'k') pin = { pinned: pb.pinned, pinner: p };
+    }
+  }
+  return { mate, pin };
+}
+
 function negative(ctx) {
   const { fenBefore, fenAfter, ply, after, mover } = ctx;
   const steps = walk(fenAfter, after.pv);
@@ -215,6 +256,12 @@ function negative(ctx) {
     return { out, r, mate: true };
   }
   if (!r) return { out, r };
+  const mt = mateThreat(r, mover);
+  if (mt && !mt.takable) {
+    const why = mt.pin ? ` ${cap(the(mt.pin.pinned.type, mover))} en ${tok(mt.pin.pinned.square)} ne peut pas prendre : ${ELLE(mt.pin.pinned.type)} est cloué${FEM[mt.pin.pinned.type] ? 'e' : ''} par ${the(mt.pin.pinner.type, opp(mover))} en ${tok(mt.pin.pinner.square)}.` : '';
+    out.push(`Ça permet ${tok(r.m.san)}, qui menace mat par ${tok(mate2san(mt.mate))}.${why}`);
+    return { out, r, tactic: true, pin: mt.pin };
+  }
   const trap = trapSentence(ply, mover, steps);
   if (trap) out.push(trap);
   const first = walk(fenBefore, [ply.uci])[0];
@@ -227,6 +274,12 @@ function negative(ctx) {
     if (r.m.captured && r.m.to === ply.to && !first.m.captured) {
       if (!trap) out.push(`${cap(the(first.m.promotion || first.m.piece, mover))} se fait prendre en ${tok(ply.to)} par ${the(r.m.piece, opp(mover))}.`);
       said = listPieces({ [first.m.promotion || first.m.piece]: 1 });
+    } else if (r.m.captured && whyNoRecapture(r, steps[1], mover)) {
+      const w = whyNoRecapture(r, steps[1], mover);
+      out.push(`Ça permet à ${the(r.m.piece, opp(mover)).replace(/^le /, 'au ').replace(/^à le /, 'au ')} de prendre ${the(r.m.captured, mover)} en ${tok(r.m.to)} : ${w.text}.`.replace('à au ', 'au '));
+      said = listPieces({ [r.m.captured]: 1 });
+      if (lost && (lost !== said || won)) out.push(`Au final, ${side(mover)} perdent ${lost}${won ? ` contre ${won}` : ''}.`);
+      return { out, r, told: -ex.net, tactic: true };
     } else if (r.m.captured) {
       const was = threatExisted(fenBefore, r.m) ? `, alors qu’${ELLE(r.m.captured)} était déjà menacé${FEM[r.m.captured] ? 'e' : ''}` : '';
       out.push(`Ça laisse ${the(r.m.captured, mover)} en ${tok(r.m.to)} se faire prendre${was}.`);
@@ -305,6 +358,8 @@ function threatFragment(first, threat, mover, score, reply) {
   const base = score.type === 'mate' ? (score.value * sign > 0 ? 3000 : -3000) : score.value * sign;
   const ifPass = threat.score.type === 'mate' ? (threat.score.value > 0 ? 3000 : -3000) : threat.score.value;
   if (ifPass - base < 40) return null; // l'adversaire n'a pas besoin d'y répondre
+  // La pièce qui porterait la menace est prise aussitôt : il n'y a pas de menace.
+  if (reply && reply.m.captured && reply.m.to === first.m.to && m.from === first.m.to) return null;
   // Une pièce attaquée qui s'écarte au coup suivant : la menace seule n'explique rien.
   if (m.captured && reply && reply.m.from === m.to) return null;
   const forked = m.san.includes('+') ? targets(steps[0].fen, m.to).filter((t) => t.type !== 'p') : [];
@@ -346,6 +401,9 @@ function doubleThreat(steps, mover) {
   return `ça attaque ${the(hit.type, hit.color)} en ${tok(hit.square)} et menace en même temps ${tok(next.m.san)}${forkTxt}`;
 }
 
+// Remarques de structure : vraies, mais elles n'expliquent jamais à elles seules une erreur.
+const WEAK = /double les pions|paire de fous|pion passé|pion isolé|plus de cases|gagne de l’espace|ça échange/;
+
 // Raisons concrètes d'un coup, de la plus forte à la plus faible. Ne décrit jamais le coup lui-même.
 function reasonsFor(ctx) {
   const { fenBefore, steps, mover, moveNumber, mateIn, prev, score, threat, playedRecapture } = ctx;
@@ -371,6 +429,10 @@ function reasonsFor(ctx) {
     const cost = listPieces(ex.lost);
     out.push(`${unpin.chases ? 'ça chasse' : 'ça libère'} ${unpin.chases ? `${the(unpin.pinner.type, foe)} qui cloue ` : ''}${the(unpin.pinned.type, mover)} en ${tok(unpin.pinned.square)}, et ${the(unpin.target, foe)} en ${tok(unpin.targetSq)} tombe${cost ? `, même si ça coûte ${cost}` : ''}`);
   }
+  // Échange simple : une pièce prise, la pièce qui prend reprise aussitôt, valeurs égales.
+  const rep = steps[1];
+  const trade = first.m.captured && V[first.m.captured] >= 3 && rep && rep.m.captured && rep.m.to === first.m.to && V[first.m.captured] === V[first.m.piece]
+    ? (first.m.captured === first.m.piece ? `ça échange les ${NAME[first.m.piece]}s` : `ça échange ${the(first.m.piece, mover)} contre ${the(first.m.captured, foe)}`) : '';
   const dbl = realGain >= 1 && !unpin ? doubleThreat(steps, mover) : null;
   if (dbl) out.push(dbl);
   if (ex.net > 0 && listPieces(ex.won) && cp >= ex.net * 50 && realGain >= 1 && !unpin && !dbl) {
@@ -421,6 +483,8 @@ function reasonsFor(ctx) {
     return !allPieces(first.fen).some((p) => p.type === 'p' && p.color === foe && Math.abs(fileIdx(p.square) - f) <= 1 && (mover === 'w' ? +p.square[1] > r : +p.square[1] < r));
   })()) out.push('ça rapproche un pion passé de la promotion');
 
+  // Un simple échange se dit comme tel, avant les remarques de structure qui n'en sont que la conséquence.
+  if (trade) { const k = out.findIndex((t) => WEAK.test(t)); out.splice(k < 0 ? out.length : k, 0, trade); }
   return [...new Set(out)];
 }
 
@@ -845,8 +909,15 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
   // Rien de concret à reprocher au coup joué : on nomme au moins la réponse qui le punit.
   if (!reasons.length && neg.r && move.loss >= 10 && !proven.length) reasons = [`Ça laisse à l’adversaire sa meilleure réponse, ${tok(neg.r.m.san)}.`];
   // Le coup conseillé rend-il impossible la réponse qui punissait le coup joué ?
-  const stops = neg.r && (refuted || neg.mate) && !new Chess(bestSteps[0].fen).moves({ verbose: true }).some((x) => x.from === neg.r.m.from && x.to === neg.r.m.to)
+  const stops = neg.r && (refuted || neg.mate || neg.tactic) && !new Chess(bestSteps[0].fen).moves({ verbose: true }).some((x) => x.from === neg.r.m.from && x.to === neg.r.m.to)
     ? `ça empêche ${tok(neg.r.m.san)}` : '';
+  // Le coup conseillé prend la pièce qui clouait : c'est la vraie raison, on la dit.
+  const unpins = neg.pin && bestSteps[0].m.to === neg.pin.pinner.square
+    ? `c’est ${ELLE(neg.pin.pinner.type)} qui cloue ${the(neg.pin.pinned.type, mover)} en ${tok(neg.pin.pinned.square)} : sans ${FEM[neg.pin.pinner.type] ? 'elle' : 'lui'}, ${tok(neg.r.m.san)} ne menace plus rien` : '';
+  // Devant une erreur, une remarque de structure ne passe pas avant ce qui pare la punition.
+  if (move.loss >= 10 && (unpins || stops) && (!proven[0] || WEAK.test(proven[0]))) proven.unshift(unpins || stops);
+  else if (unpins) proven.unshift(unpins);
+  if (move.loss >= 10) for (let k = proven.length - 1; k >= 1; k -= 1) if (WEAK.test(proven[k])) proven.splice(k, 1);
   const effect = !proven[0] ? stops || purposes({ fenBefore, steps: bestSteps, mover, prev }).find((t) => !/^l’idée|^la réponse/.test(t)) || general[0] : '';
   let better;
   if (st && st.sac && st.text) better = `Mieux valait ${action} : ${withStory('', st)}.`;
