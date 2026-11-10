@@ -6,7 +6,7 @@ import {
 import { Engine, POOL_SIZE } from './engine.js';
 import { createTrainer } from './exercises.js';
 import { createFx } from './fx.js';
-import { bookFromEcoUrl, explainMove, isSacrifice, sanToSpeech } from './explain.js';
+import { bookFromEcoUrl, enPrise, explainMove, isSacrifice, sanToSpeech, walk } from './explain.js';
 
 const API = 'https://api.chess.com/pub/player/';
 const FIGURINES = { K: '♚', Q: '♛', R: '♜', B: '♝', N: '♞' };
@@ -86,11 +86,14 @@ function sanOf(fen, uci) {
 const moveNo = (i) => Math.floor(i / 2) + 1;
 const moveLabel = (i, san) => `${moveNo(i)}${i % 2 ? '…' : '.'} ${fig(san)}`;
 
-function renderBoard() {
+function renderBoard(boardOnly) {
   const { game, cursor, report } = state;
   if (!game) { renderVerdict(); renderGuide(); return; }
   const ply = cursor > 0 ? game.plies[cursor - 1] : null;
   const judged = ply && report ? report.moves[cursor - 1] : null;
+  // Une suite est affichée sur l'échiquier : un simple rafraîchissement ne la remplace pas.
+  if (state.preview && state.preview.game === game && state.preview.cursor === cursor && $('verdict').querySelector('.v-more')) return;
+  state.preview = null;
   cg.set({
     fen: game.fens[cursor],
     orientation: orientation(),
@@ -114,9 +117,11 @@ function renderBoard() {
     delta.textContent = d > 0 ? `+${d}` : d < 0 ? `−${-d}` : '0';
   } else delta.hidden = true;
   renderBadge(ply, judged);
+  if (boardOnly) return;
   renderVerdict();
   renderGuide();
 }
+const renderBoardOnly = () => renderBoard(true);
 
 const inVariation = (i) => !!state.variation && i >= state.variation.base;
 
@@ -188,18 +193,80 @@ function renderVerdict() {
   (ex.notes || []).forEach((t) => body.append(h('p', { class: 'v-note' }, display(t))));
   if (ex.details) {
     const more = h('details', { class: 'v-more' }, h('summary', {}, 'Comprendre ce coup'));
+    more.addEventListener('toggle', () => {
+      // Sur téléphone, le panneau s'ouvre sous l'échiquier, qui reste visible pour suivre les coups.
+      box.style.setProperty('--sheet-top', `${Math.round($('board').getBoundingClientRect().bottom + 6)}px`);
+      if (!more.open) leavePreview();
+    });
     if (ex.details.key) more.append(h('p', { class: 'v-key' }, display(ex.details.key)));
+    more.append(h('p', { class: 'v-hint' }, 'Touche un coup pour le voir sur l’échiquier.'));
     ex.details.blocks.forEach((b) => {
-      more.append(h('p', { class: 'v-blk' }, b.title));
-      more.append(h('ol', { class: 'v-steps' }, ...b.lines.map((l) => h('li', {}, display(l)))));
+      const list = h('ol', { class: 'v-steps' });
+      const show = (k) => showStep(b, k, list);
+      list.append(...b.lines.map((l, k) => h('li', {}, h('button', { type: 'button', class: 'v-step', onclick: () => show(k) }, display(l.text)))));
+      more.append(h('div', { class: 'v-blk' }, h('span', {}, b.title),
+        h('button', { type: 'button', class: 'ghost v-play', onclick: () => playLine(b, list) }, '▶ Dérouler')));
+      more.append(list);
       more.append(h('p', { class: 'v-tally' }, b.tally));
     });
     more.append(h('p', { class: 'v-tally' }, ex.details.compare));
+    more.append(h('button', { type: 'button', class: 'ghost v-back', onclick: () => leavePreview() }, 'Revenir à la position de la partie'));
     body.append(more);
   }
   if (ex.line) body.append(h('p', { class: 'v-line' }, 'Suite prévue : ', display(ex.line)));
   if (state.variation && state.variation.ended && cursor === game.plies.length) body.append(h('p', { class: 'v-text' }, h('strong', {}, state.variation.ended)));
   box.append(body);
+}
+
+/* ---------- Suites à voir sur l'échiquier ---------- */
+
+let lineTimer = 0;
+function showStep(block, k, list) {
+  const { game, cursor } = state;
+  const l = block.lines[k];
+  const was = state.preview;
+  // Depuis un autre endroit que le coup précédent de la même suite : on repart du coup d'avant, sans animation,
+  // pour que seul le coup touché se déplace.
+  const prevFen = k > 0 ? block.lines[k - 1].fen : block.startFen;
+  if (!was || was.fen !== prevFen) {
+    cg.set({ animation: { enabled: false } });
+    cg.set({ fen: prevFen, lastMove: undefined, check: false });
+    cg.set({ animation: { enabled: true } });
+  }
+  const white = l.fen.split(' ')[1] === 'w';
+  state.preview = { game, cursor, fen: l.fen };
+  cg.set({ fen: l.fen, lastMove: [l.from, l.to], turnColor: white ? 'white' : 'black', check: /[+#]$/.test(l.san) ? (white ? 'white' : 'black') : false });
+  cg.setAutoShapes([]);
+  $('badge').hidden = true;
+  fx.played({ san: l.san, to: l.to, fen: l.fen, el: $('board'), orientation: orientation() });
+  $('verdict').querySelectorAll('.v-step.on').forEach((b) => b.classList.remove('on'));
+  const btn = list.children[k].firstChild;
+  btn.classList.add('on');
+  btn.scrollIntoView({ block: 'nearest' });
+  $('verdict').classList.add('previewing');
+}
+
+function playLine(block, list) {
+  clearInterval(lineTimer);
+  let k = 0;
+  const step = () => {
+    if (!list.isConnected || k >= block.lines.length) { clearInterval(lineTimer); return; }
+    showStep(block, k, list);
+    k += 1;
+  };
+  step();
+  lineTimer = setInterval(step, 1100);
+}
+
+function leavePreview() {
+  clearInterval(lineTimer);
+  $('verdict').classList.remove('previewing');
+  $('verdict').querySelectorAll('.v-step.on').forEach((b) => b.classList.remove('on'));
+  if (!state.preview) return;
+  state.preview = null;
+  cg.set({ animation: { enabled: false } });
+  renderBoardOnly();
+  cg.set({ animation: { enabled: true } });
 }
 
 let movesSig = '';
@@ -350,6 +417,9 @@ function go(i, fromUser) {
   const moved = next !== state.cursor;
   const stepped = next === state.cursor + 1;
   state.cursor = next;
+  clearInterval(lineTimer);
+  state.preview = null;
+  $('verdict').classList.remove('previewing');
   renderBoard();
   renderMoves();
   moveChartCursor();
@@ -583,6 +653,8 @@ async function analyze(game, key) {
     if (me.cancelled) return;
     await findAlternatives(game, engines, depth, me);
     if (me.cancelled) return;
+    await deepen(game, engines, depth, me);
+    if (me.cancelled) return;
     $('progress-text').textContent = 'Recherche des raisons de chaque coup…';
     const todo = [];
     for (let i = game.bookPlies; i < game.plies.length; i += 1) if (game.plies[i].legal >= 2) todo.push(i);
@@ -652,6 +724,55 @@ async function findAlternatives(game, engines, depth, me) {
     const r = await engine.evaluate(game.fens[i], depth, others);
     if (me.cancelled) return;
     state.evals[i].second = toWhiteScore(r.score, ply.color === 'w');
+  });
+}
+
+// Pour les coups à expliquer : prolonge les variantes trop courtes et, quand le coup conseillé
+// offre une pièce que la variante ne prend pas, calcule la suite où l'adversaire la prend.
+async function deepen(game, engines, depth, me) {
+  const report = buildReport(game.plies, state.evals, game.bookPlies);
+  $('progress-text').textContent = 'Calcul des suites à expliquer…';
+  const todo = [];
+  report.moves.forEach((m, i) => {
+    if (m.pending || m.kind === 'book' || game.plies[i].legal < 2) return;
+    if ((!m.playedBest && m.loss >= 5) || ['brilliant', 'great'].includes(m.kind)) todo.push(i);
+  });
+  const d = Math.max(10, depth - 2);
+  const extend = async (engine, idx) => {
+    const ev = state.evals[idx];
+    if (!ev || !ev.pv || ev.extended) return;
+    ev.extended = true;
+    for (let k = 0; k < 2; k += 1) {
+      const steps = walk(game.fens[idx], ev.pv, 30);
+      if (!steps.length || steps.length >= 9) break;
+      const end = steps[steps.length - 1].fen;
+      if (new Chess(end).isGameOver()) break;
+      const r = await engine.evaluate(end, d);
+      if (me.cancelled || !r.pv.length) return;
+      ev.pv = [...ev.pv.slice(0, steps.length), ...r.pv];
+    }
+  };
+  await share(engines, todo, 2, me, async (engine, i) => {
+    await extend(engine, i);
+    if (me.cancelled) return;
+    if (!report.moves[i].playedBest) await extend(engine, i + 1);
+    if (me.cancelled) return;
+    const ev = state.evals[i];
+    const first = walk(game.fens[i], ev.pv, 2);
+    if (!first[0] || first[0].m.san.endsWith('#')) return;
+    const ep = enPrise(first[0].m);
+    const accepted = first[1] && first[1].m.captured && first[1].m.to === first[0].m.to;
+    if (!ep || accepted) return;
+    const r = await engine.evaluate(first[0].fen, d, ep.caps);
+    if (me.cancelled) return;
+    let pv = r.pv;
+    const sub = walk(first[0].fen, pv, 30);
+    if (sub.length && sub.length < 8 && !new Chess(sub[sub.length - 1].fen).isGameOver()) {
+      const more = await engine.evaluate(sub[sub.length - 1].fen, d);
+      if (me.cancelled) return;
+      pv = [...pv.slice(0, sub.length), ...more.pv];
+    }
+    ev.ifTaken = { pv, score: toWhiteScore(r.score, first[0].fen.split(' ')[1] === 'w') };
   });
 }
 
@@ -1030,7 +1151,7 @@ const savedDepth = store.get('depth');
 if (savedDepth && [...$('depth').options].some((o) => o.value === savedDepth)) $('depth').value = savedDepth;
 
 window.__openPgn = openGame;
-if (__AUDIT__) window.__state = state;
+if (__AUDIT__) { window.__state = state; window.__cg = cg; window.__explain = (i) => explanation(i); }
 setTab('parties');
 refreshAll();
 

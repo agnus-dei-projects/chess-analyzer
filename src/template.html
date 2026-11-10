@@ -131,8 +131,16 @@ cg-board square.move-dest { animation: dest-in .14s ease-out; }
 .promo piece { position: absolute; inset: 0; width: 100%; height: 100%; transform: none; }
 .v-more { margin-top: 2px; font-size: 13px; }
 .v-more summary { color: var(--accent); font-weight: 600; cursor: pointer; padding: 4px 0; }
+.v-more[open] summary::after { content: 'Fermer ✕'; float: right; color: var(--muted); font-weight: 400; }
 .v-key { font-weight: 600; margin: 4px 0; }
-.v-blk { font-weight: 600; margin: 8px 0 2px; }
+.v-blk { font-weight: 600; margin: 10px 0 2px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.v-play { font-size: 12px; padding: 3px 9px; white-space: nowrap; }
+.v-hint { color: var(--muted); font-size: 12px; margin: 2px 0; }
+.v-step { display: block; width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; border-radius: 6px; padding: 7px 8px; cursor: pointer; }
+.v-step:hover { background: var(--accent-soft); }
+.v-step.on { background: var(--accent); color: #fff; }
+.v-back { display: none; margin-top: 6px; font-size: 12.5px; }
+.previewing .v-back { display: block; }
 .v-steps { margin: 0; padding: 0; list-style: none; }
 .v-steps li { font-family: var(--mono); font-size: 12.5px; }
 .v-tally { color: var(--muted); margin: 3px 0; }
@@ -303,7 +311,7 @@ td:last-child { text-align: right; }
   #guide .ghost { min-height: 36px; white-space: nowrap; }
   .chip.var { font-style: italic; border-color: var(--accent); }
   #verdict { order: 5; flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px; }
-  #verdict:has(.v-more[open]) { position: fixed; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); max-height: 74dvh; z-index: 30; flex: none; box-shadow: 0 -6px 24px rgba(30, 18, 8, .35); }
+  #verdict:has(.v-more[open]) { position: fixed; left: 8px; right: 8px; top: var(--sheet-top, 50dvh); bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 30; flex: none; box-shadow: 0 -6px 24px rgba(30, 18, 8, .35); }
   .v-more summary { position: sticky; top: -8px; background: var(--panel); }
   .v-text { font-size: 14px; line-height: 1.35; }
   .controls { order: 6; display: grid; grid-template-columns: repeat(4, 1fr) auto; gap: 6px; flex: none; }

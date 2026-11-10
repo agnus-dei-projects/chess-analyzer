@@ -508,43 +508,195 @@ function purposes({ fenBefore, steps, mover, prev }) {
   return out;
 }
 
-// Explication détaillée, écrite seulement : chaque ligne vient de la variante du moteur.
-function stepLine(s, prevStep) {
-  const m = s.m;
-  const parts = [];
-  if (m.san.startsWith('O-O')) parts.push('roque');
-  if (m.promotion) parts.push(`promotion en ${NAME[m.promotion]}`);
-  if (m.captured) parts.push(prevStep && prevStep.m.captured && prevStep.m.to === m.to ? `reprend ${the(m.captured, opp(m.color))}` : `prend ${the(m.captured, opp(m.color))}`);
-  if (m.san.endsWith('#')) parts.push('échec et mat');
-  else if (m.san.endsWith('+')) parts.push('échec');
-  else if (!m.captured) {
-    const hit = targets(s.fen, m.to).filter((t) => t.type !== 'k' && V[t.type] >= 3)[0];
-    if (hit) parts.push(`attaque ${the(hit.type, hit.color)}`);
-  }
-  return `${m.color === 'w' ? 'Blancs' : 'Noirs'} ${tok(m.san)}${parts.length ? ` : ${parts.join(', ')}` : ''}`;
+// Pièce laissée en prise par le coup : l'adversaire peut la prendre et elle y perd.
+export function enPrise(m) {
+  if (!'nbrq'.includes(m.piece) || m.promotion) return null;
+  const c = new Chess(m.after);
+  const caps = c.moves({ verbose: true }).filter((x) => x.to === m.to && x.captured);
+  if (!caps.length) return null;
+  const defended = c.attackers(m.to, m.color).length > 0;
+  const cheapest = Math.min(...caps.map((x) => (x.piece === 'k' ? 10 : V[x.piece])));
+  if (defended && cheapest >= V[m.piece]) return null;
+  const gain = m.captured ? V[m.captured] : 0;
+  return { caps: caps.map((x) => x.from + x.to + (x.promotion || '')), sacrifice: V[m.piece] - gain >= 2 };
 }
 
-function lineBlock(title, steps, mover, startFen, n = 6) {
-  const shown = steps.slice(0, n);
-  const lines = shown.map((s, i) => stepLine(s, shown[i - 1]));
+const le = (p) => `${FEM[p] ? 'la' : 'le'} ${NAME[p]}`;
+
+// Le camp qui vient de jouer menace-t-il mat au coup suivant ?
+function threatensMate(fen) {
+  try {
+    const c = new Chess(flipTurn(fen), { skipValidation: true });
+    if (c.inCheck()) return false;
+    return c.moves().some((s) => s.endsWith('#'));
+  } catch { return false; }
+}
+
+// Un coup de la suite, dit en mots : qui fait quoi.
+function clause(s, prevStep, { own, first }) {
+  const m = s.m;
+  // La couleur n'est précisée que là où on pourrait confondre : les rois, et deux pièces identiques à la suite.
+  const who = m.piece === 'k' || (prevStep && prevStep.m.piece === m.piece) ? the(m.piece, m.color) : le(m.piece);
+  const mate = m.san.endsWith('#'); const chk = m.san.endsWith('+');
+  if (m.san.startsWith('O-O')) return `${side(m.color)} roquent`;
+  if (first && !own && !(m.captured && prevStep.m.to === m.to) && !chk && !mate && !m.promotion) {
+    return m.captured ? `après ${tok(m.san)}, où ${who} prend ${le(m.captured)}` : `sur ${who} en ${tok(m.to)}`;
+  }
+  const forced = !own && prevStep && new Chess(prevStep.fen).moves().length === 1;
+  let base;
+  if (m.promotion) base = `le pion arrive en ${tok(m.to)} et devient ${NAME[m.promotion]}`;
+  else if (m.captured) {
+    const re = prevStep && prevStep.m.to === m.to;
+    if (first && re) base = `si ${who} prend`;
+    else base = re ? `${who} ${prevStep.m.captured ? 'reprend' : 'prend'} en ${tok(m.to)}` : `${who} prend ${le(m.captured)} en ${tok(m.to)}`;
+  } else base = `${who} ${forced ? 'n’a que la case' : 'va en'} ${tok(m.to)}`;
+  if (mate) return m.captured || m.promotion ? `${base}, et c’est mat` : `${who} fait mat en ${tok(m.to)}`;
+  if (chk) return m.captured || m.promotion ? `${base} avec échec` : `${who} donne échec en ${tok(m.to)}`;
+  if (own && !m.captured) {
+    if (threatensMate(s.fen)) return `${base} et menace mat`;
+    const hit = targets(s.fen, m.to).filter((t) => t.type !== 'k' && V[t.type] >= 3)[0];
+    if (hit) return `${base} et attaque ${le(hit.type)}`;
+  }
+  return base;
+}
+
+// Raconte la suite après le premier coup, jusqu'au mat ou jusqu'à ce que le matériel soit récupéré.
+// Renvoie null si rien de décisif n'arrive dans les coups racontés : on ne promet pas ce que la suite ne montre pas.
+export function narrate(startFen, steps, mover, { max = 8, mateIn = 0, winning = false } = {}) {
+  if (steps.length < 2) return null;
+  const base = materialFor(startFen, mover);
+  const parts = [];
+  let end = -1; let mate = false;
+  for (let i = 1; i < steps.length && i <= max; i += 1) {
+    const s = steps[i];
+    parts.push(clause(s, steps[i - 1], { own: s.m.color === mover, first: i === 1 }));
+    if (s.m.san.endsWith('#')) { end = i; mate = s.m.color === mover; break; }
+    const next = steps[i + 1];
+    const bal = materialFor(s.fen, mover) - base;
+    if (mateIn) continue; // mat annoncé : on va jusqu'au mat, sans s'arrêter au matériel
+    if (i >= 2 && bal >= 1 && s.m.color === mover && !(next && next.m.captured && steps[i + 2] === undefined)) {
+      // la prise adverse qui suit éventuellement fait partie du décompte
+      if (next && next.m.captured) continue;
+      end = i; break;
+    }
+    if (i >= 3 && bal >= 1 && s.m.color !== mover && !(next && next.m.captured)) { end = i; break; }
+  }
+  if (end < 0) {
+    // Rien de compté dans les coups racontés : on ne conclut que si le moteur annonce un mat ou un gain net.
+    if (!mateIn && !winning) return null;
+    let k = Math.min(5, steps.length - 1);
+    if (steps[k].m.color !== mover) k -= 1;
+    if (k < 2) return null;
+    return { text: parts.slice(0, k).join(', '), outcome: mateIn ? `le mat suit, en ${mateIn} coups au total` : 'l’attaque rapporte plus que la pièce donnée', mate: false, end: k, net: 0, open: true, later: false };
+  }
+  if (steps[end].m.san.endsWith('#') && !mate) return null;
+  if (mate && end > 6) {
+    // Mat lointain : on raconte le début, le panneau écrit montre toute la suite.
+    const k = steps[5].m.color === mover ? 5 : 4;
+    return { text: parts.slice(0, k).join(', '), outcome: `le mat suit, en ${Math.ceil((end + 1) / 2)} coups au total`, mate: false, end: k, net: 0, open: true, later: false };
+  }
+  const shown = steps.slice(0, end + 1);
   const won = {}; const lost = {};
   shown.forEach((s) => { if (s.m.captured) { const bag = s.m.color === mover ? won : lost; bag[s.m.captured] = (bag[s.m.captured] || 0) + 1; } });
   Object.keys(won).forEach((p) => { const k = Math.min(won[p], lost[p] || 0); won[p] -= k; if (lost[p]) lost[p] -= k; });
   const a = listPieces(won); const b = listPieces(lost);
-  const tally = a || b ? `Bilan pour ${side(mover)} : ${a ? `+ ${a}` : ''}${a && b ? ', ' : ''}${b ? `− ${b}` : ''}.` : 'Pas de changement de matériel sur cette suite.';
-  return { title, lines, tally };
+  const net = materialFor(steps[end].fen, mover) - base;
+  const outcome = mate ? '' : (a ? `${side(mover)} en sortent avec ${a}${b ? ` contre ${b}` : ''}` : `${side(mover)} en sortent avec du matériel en plus`);
+  // « later » : le gain n'est pas acquis dès le premier échange, la suite apporte donc une étape à comprendre.
+  const after1 = materialFor(steps[1].fen, mover) - base;
+  return { text: parts.slice(0, end).join(', '), outcome, mate, end, net, later: mate || net > Math.max(after1, 0) };
 }
 
-function buildDetails({ fenBefore, fenAfter, mover, ply, bestSteps, playedLine, before, after, played }) {
+// Explication détaillée, écrite seulement : chaque ligne vient de la variante du moteur.
+function stepLine(s, prevStep, mover) {
+  const m = s.m;
+  const parts = [];
+  if (m.san.startsWith('O-O')) parts.push('roque');
+  if (m.promotion) parts.push(`promotion en ${NAME[m.promotion]}`);
+  if (m.captured) parts.push(prevStep && prevStep.m.captured && prevStep.m.to === m.to ? `reprend ${le(m.captured)}` : `prend ${le(m.captured)}`);
+  if (m.san.endsWith('#')) parts.push('échec et mat');
+  else if (m.san.endsWith('+')) parts.push('échec');
+  else if (!m.captured) {
+    if (m.color === mover && threatensMate(s.fen)) parts.push('menace mat');
+    else {
+      const hit = targets(s.fen, m.to).filter((t) => t.type !== 'k' && V[t.type] >= 3)[0];
+      if (hit) parts.push(`attaque ${le(hit.type)}`);
+    }
+  }
+  const ep = !m.san.endsWith('#') && enPrise(m);
+  if (ep && ep.sacrifice) parts.push(`${le(m.piece)} s’offre`);
+  if (prevStep && new Chess(prevStep.fen).moves().length === 1) parts.push('seul coup');
+  return `${m.color === 'w' ? 'Blancs' : 'Noirs'} ${tok(m.san)}${parts.length ? ` : ${parts.join(', ')}` : ''}`;
+}
+
+function lineBlock(title, steps, mover, startFen, n = 8) {
+  let k = Math.min(n, steps.length);
+  while (k < steps.length && k < 12 && steps[k].m.captured) k += 1;
+  const shown = steps.slice(0, k);
+  const lines = shown.map((s, i) => ({ text: stepLine(s, shown[i - 1], mover), fen: s.fen, from: s.m.from, to: s.m.to, san: s.m.san }));
+  const won = {}; const lost = {};
+  shown.forEach((s) => { if (s.m.captured) { const bag = s.m.color === mover ? won : lost; bag[s.m.captured] = (bag[s.m.captured] || 0) + 1; } });
+  Object.keys(won).forEach((p) => { const c = Math.min(won[p], lost[p] || 0); won[p] -= c; if (lost[p]) lost[p] -= c; });
+  const a = listPieces(won); const b = listPieces(lost);
+  const mate = shown.length && shown[shown.length - 1].m.san.endsWith('#');
+  const tally = mate ? 'La suite se termine par un mat.' : a || b ? `Bilan pour ${side(mover)} : ${a ? `+ ${a}` : ''}${a && b ? ', ' : ''}${b ? `− ${b}` : ''}.` : 'Pas de changement de matériel sur cette suite.';
+  return { title, startFen, lines, tally };
+}
+
+// Si le coup conseillé offre une pièce : la suite où l'adversaire la prend, celle qui explique le sacrifice.
+function takenLine(fenBefore, bestSteps, before) {
+  const first = bestSteps[0];
+  if (!first) return null;
+  const ep = first.m.san.endsWith('#') ? null : enPrise(first.m);
+  if (!ep) return null;
+  const accepted = bestSteps[1] && bestSteps[1].m.captured && bestSteps[1].m.to === first.m.to;
+  if (accepted) return { ep, steps: bestSteps, accepted };
+  if (!before.ifTaken || !before.ifTaken.pv || !before.ifTaken.pv.length) return { ep, steps: null, accepted };
+  const steps = [first, ...walk(first.fen, before.ifTaken.pv)];
+  return { ep, steps: steps.length > 1 ? steps : null, accepted };
+}
+
+function buildDetails({ fenBefore, mover, bestSteps, playedLine, before, after, played, story }) {
   const unpin = bestSteps.length ? unpinMotif(fenBefore, bestSteps, mover) : null;
   const key = unpin
     ? `La clé : ${the(unpin.pinned.type, mover)} en ${tok(unpin.pinned.square)} est cloué${FEM[unpin.pinned.type] ? 'e' : ''} devant le roi par ${the(unpin.pinner.type, opp(mover))} en ${tok(unpin.pinner.square)}. La prise ${tok(unpin.capture.san)} est donc impossible tant que ${FEM[unpin.pinner.type] ? 'celle-ci' : 'celui-ci'} reste sur cette ligne.`
-    : '';
+    : (story || '');
   const blocks = [];
   if (bestSteps.length) blocks.push(lineBlock(played ? 'La suite calculée' : 'Avec le coup conseillé', bestSteps, mover, fenBefore));
+  const tk = bestSteps.length ? takenLine(fenBefore, bestSteps, before) : null;
+  if (tk && !tk.accepted && tk.steps) blocks.push(lineBlock(`Et si l’adversaire prend ${le(bestSteps[0].m.piece)} ?`, tk.steps, mover, fenBefore));
   if (!played) blocks.push(lineBlock('Avec le coup joué', playedLine, mover, fenBefore));
   const compare = played ? `Évaluation : ${evalWords(after.score)}.` : `Après le coup conseillé : ${evalWords(before.score)}. Après le coup joué : ${evalWords(after.score)}.`;
   return { key, blocks, compare };
+}
+
+// Le récit de la suite gagnante, pour ne pas sauter d'étape entre le coup et son résultat.
+function storyOf(fenBefore, steps, before, mover) {
+  const first = steps[0];
+  if (!first) return null;
+  const tk = takenLine(fenBefore, steps, before);
+  const sign = mover === 'w' ? 1 : -1;
+  const facts = (sc) => ({
+    mateIn: sc.type === 'mate' && sc.value * sign > 0 ? sc.value * sign : 0,
+    winning: sc.type === 'cp' && sc.value * sign >= 300,
+  });
+  if (tk && tk.steps) {
+    const n = narrate(fenBefore, tk.steps, mover, facts(tk.accepted ? before.score : before.ifTaken.score));
+    // suite secondaire : on ne la raconte que si elle est bien bonne pour le camp qui sacrifie
+    const okScore = tk.accepted || (before.ifTaken && (before.ifTaken.score.type === 'mate' ? before.ifTaken.score.value * sign > 0 : before.ifTaken.score.value * sign >= 100));
+    // Vrai sacrifice : après la prise et le coup suivant, le camp a toujours nettement moins de matériel.
+    const probe = tk.steps[2] || tk.steps[1];
+    const realSac = tk.ep.sacrifice && materialFor(probe.fen, mover) - materialFor(fenBefore, mover) <= -2;
+    if (n && okScore && (n.mate || n.net >= 1 || n.open) && (tk.accepted || realSac)) return { ...n, sac: realSac, taken: true };
+  }
+  const n = narrate(fenBefore, steps, mover, { mateIn: facts(before.score).mateIn });
+  return n ? { ...n, sac: false } : null;
+}
+
+function withStory(reason, st) {
+  if (!st || !st.text) return reason;
+  const tail = st.outcome ? `${st.text}, et ${st.outcome}` : st.text;
+  return reason ? `${reason} : ${tail}` : tail;
 }
 
 const keyOf = (t) => t.split(' ').slice(0, 2).join(' ');
@@ -584,7 +736,7 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
   const mateFor = (s) => (s.type === 'mate' && s.value * sign > 0 ? s.value * sign : 0);
   const lead = special ? [special] : [];
 
-  const STRONG = /\bmat\b|gagne|à la fois|cloue|défenseur|menace de prendre (le cavalier|le fou|la tour|la dame)|menace un mat/;
+  const STRONG = /\bmat(?![a-zé])|gagne|à la fois|cloue|défenseur|menace de prendre (le cavalier|le fou|la tour|la dame)|menace un mat/;
 
   const playedLine = [...walk(fenBefore, [ply.uci]), ...walk(fenAfter, after.pv)];
   const describe = (why) => [...why.filter((t) => !/^sinon/.test(t)), ...purposes({ fenBefore, steps: playedLine, mover, prev })];
@@ -593,8 +745,14 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
     const why = reasonsFor({ fenBefore, steps: playedLine, mover, moveNumber, mateIn: mateFor(before.score), prev, score: before.score, threat: before.threat, playedRecapture: true });
     const strong = why.find((t) => STRONG.test(t));
     const chosen = strong || pick(describe(why), avoid);
-    const details = ['brilliant', 'great'].includes(move.kind) ? buildDetails({ fenBefore, fenAfter, mover, ply, bestSteps: playedLine, playedLine, before, after, played: true }) : null;
-    return { sentences: [special, chosen ? sentence(chosen) : ''].filter(Boolean), notes: [], line: lineOf(playedLine.slice(1), 4), key: keyOf(chosen || ''), details };
+    const showy = ['brilliant', 'great'].includes(move.kind);
+    const st = showy || (strong && /^ça gagne|^ça force le mat|tombe/.test(strong)) ? storyOf(fenBefore, playedLine, before, mover) : null;
+    // Le récit n'est ajouté que s'il apporte une étape : sacrifice, ou gain et mat qui n'arrivent pas tout de suite.
+    // Avec une raison déjà dite, il doit aller jusqu'au bout (mat ou gain), sinon il s'arrêterait en l'air.
+    const tell = st && st.text && (strong && !st.sac ? st.later && !st.open : st.sac || st.later || (showy && st.open));
+    const said = tell ? withStory(strong && !st.sac ? strong : '', strong && !st.sac ? { ...st, outcome: '' } : st) : chosen;
+    const details = showy || tell ? buildDetails({ fenBefore, mover, bestSteps: playedLine, playedLine, before, after, played: true, story: tell ? sentence(`En mots : ${withStory('', st)}`) : '' }) : null;
+    return { sentences: [special, said ? sentence(said) : ''].filter(Boolean), notes: [], line: lineOf(playedLine.slice(1), 4), key: keyOf(chosen || ''), details };
   }
 
   const neg = negative({ fenBefore, fenAfter, ply, after, mover });
@@ -615,7 +773,9 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
   }
   const line = lineOf(bestSteps.slice(1), 4);
   if (!bestSteps.length) return { sentences: [...lead, ...reasons], notes: [], line };
-  const action = moveAction(bestSteps[0].m);
+  const st = move.loss >= 5 ? storyOf(fenBefore, bestSteps, before, mover) : null;
+  const b0 = bestSteps[0].m;
+  const action = st && st.sac ? `sacrifier ${le(b0.piece)} en ${tok(b0.to)}` : moveAction(b0);
   if (move.loss < 5) {
     // Bon coup : on dit ce qu'il fait, la nuance reste écrite à part.
     const own = reasonsFor({ fenBefore, steps: playedLine, mover, moveNumber, mateIn: mateFor(after.score), prev, score: after.score, playedRecapture });
@@ -624,12 +784,15 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
   }
   // Sans raison prouvée, on décrit l'effet du coup conseillé sans le présenter comme une preuve.
   const effect = !proven[0] ? purposes({ fenBefore, steps: bestSteps, mover, prev }).find((t) => !/^l’idée|^la réponse/.test(t)) || general[0] : '';
-  const better = `Mieux valait ${action}${proven[0] ? `, car ${proven[0]}` : effect ? ` : ${effect}` : ''}.`;
+  let better;
+  if (st && st.sac && st.text) better = `Mieux valait ${action} : ${withStory('', st)}.`;
+  else if (st && st.text && st.later && !st.open && proven[0] && /^ça gagne|^ça force le mat|tombe/.test(proven[0])) better = `Mieux valait ${action}, car ${withStory(proven[0], { ...st, outcome: '' })}.`;
+  else better = `Mieux valait ${action}${proven[0] ? `, car ${proven[0]}` : effect ? ` : ${effect}` : ''}.`;
   return {
     sentences: [...reasons.slice(0, 2), special && !reasons.length ? special : '', better].filter(Boolean),
     notes: [proven[1] ? `Et ${proven[1]}.` : '', general[0] && general[0] !== effect ? `Idée générale : ${general[0]}.` : ''].filter(Boolean),
     line,
     key: '',
-    details: buildDetails({ fenBefore, fenAfter, mover, ply, bestSteps, playedLine, before, after, played: false }),
+    details: buildDetails({ fenBefore, mover, bestSteps, playedLine, before, after, played: false, story: st && st.text && (st.sac || st.later || st.open) ? sentence(`En mots : ${withStory('', st)}`) : '' }),
   };
 }
