@@ -295,7 +295,7 @@ export function moveAction(m) {
   return `jouer ${FEM[m.piece] ? 'la' : 'le'} ${NAME[m.piece]} en ${tok(m.to)}`;
 }
 
-function threatFragment(first, threat, mover, score) {
+function threatFragment(first, threat, mover, score, reply) {
   if (!threat || !threat.pv || !threat.pv.length) return null;
   if (threat.score.type === 'mate' && threat.score.value > 0 && threat.score.value <= 4) return `ça menace un mat en ${threat.score.value}`;
   const steps = walk(threat.fen, threat.pv);
@@ -305,6 +305,8 @@ function threatFragment(first, threat, mover, score) {
   const base = score.type === 'mate' ? (score.value * sign > 0 ? 3000 : -3000) : score.value * sign;
   const ifPass = threat.score.type === 'mate' ? (threat.score.value > 0 ? 3000 : -3000) : threat.score.value;
   if (ifPass - base < 40) return null; // l'adversaire n'a pas besoin d'y répondre
+  // Une pièce attaquée qui s'écarte au coup suivant : la menace seule n'explique rien.
+  if (m.captured && reply && reply.m.from === m.to) return null;
   if (m.captured && exchange(steps, mover).net > 0 && lineDelta(threat.fen, steps, mover, 4) >= 1) return `ça menace de prendre ${the(m.captured, opp(mover))} en ${tok(m.to)}`;
   if (m.promotion) return 'ça menace de promouvoir le pion';
   return null;
@@ -327,6 +329,18 @@ function unpinMotif(fenBefore, steps, mover) {
     }
   }
   return null;
+}
+
+// Double menace : le coup attaque une pièce qui doit s'écarter, et un autre coup gagnant suit ailleurs.
+function doubleThreat(steps, mover) {
+  const [first, reply, next] = steps;
+  if (!first || !reply || !next || next.m.color !== mover) return null;
+  const hit = targets(first.fen, first.m.to).filter((t) => t.type !== 'k' && V[t.type] >= 3)[0];
+  if (!hit || reply.m.from !== hit.square) return null;
+  if (!(next.m.captured || next.m.san.includes('+')) || next.m.to === reply.m.to) return null;
+  const fork = targets(next.fen, next.m.to).filter((t) => t.type !== 'p');
+  const forkTxt = fork.length >= 2 ? `, une fourchette sur ${FEM[fork[0].type] ? 'la' : 'le'} ${NAME[fork[0].type]} et ${FEM[fork[1].type] ? 'la' : 'le'} ${NAME[fork[1].type]}` : '';
+  return `ça attaque ${the(hit.type, hit.color)} en ${tok(hit.square)} et menace en même temps ${tok(next.m.san)}${forkTxt}`;
 }
 
 // Raisons concrètes d'un coup, de la plus forte à la plus faible. Ne décrit jamais le coup lui-même.
@@ -354,7 +368,9 @@ function reasonsFor(ctx) {
     const cost = listPieces(ex.lost);
     out.push(`${unpin.chases ? 'ça chasse' : 'ça libère'} ${unpin.chases ? `${the(unpin.pinner.type, foe)} qui cloue ` : ''}${the(unpin.pinned.type, mover)} en ${tok(unpin.pinned.square)}, et ${the(unpin.target, foe)} en ${tok(unpin.targetSq)} tombe${cost ? `, même si ça coûte ${cost}` : ''}`);
   }
-  if (ex.net > 0 && listPieces(ex.won) && cp >= ex.net * 50 && realGain >= 1 && !unpin) {
+  const dbl = realGain >= 1 && !unpin ? doubleThreat(steps, mover) : null;
+  if (dbl) out.push(dbl);
+  if (ex.net > 0 && listPieces(ex.won) && cp >= ex.net * 50 && realGain >= 1 && !unpin && !dbl) {
     const lost = listPieces(ex.lost);
     out.push(`ça gagne ${listPieces(ex.won)}${lost ? ` contre ${lost}` : ''}`);
   }
@@ -375,7 +391,7 @@ function reasonsFor(ctx) {
     const pin = pinBy(first.fen, m.to);
     if (pin) out.push(`ça cloue ${the(pin.pinned.type, foe)} en ${tok(pin.pinned.square)} devant ${the(pin.behind.type, foe)} en ${tok(pin.behind.square)}`);
   }
-  const t = threatFragment(first, threat, mover, score);
+  const t = threatFragment(first, threat, mover, score, steps[1]);
   if (t) out.push(t);
 
   // Conséquences sur la structure, mesurées à la fin des échanges.
@@ -577,6 +593,7 @@ export function narrate(startFen, steps, mover, { max = 8, mateIn = 0, winning =
     if (i >= 2 && bal >= 1 && s.m.color === mover && !(next && next.m.captured && steps[i + 2] === undefined)) {
       // la prise adverse qui suit éventuellement fait partie du décompte
       if (next && next.m.captured) continue;
+      if (steps[i + 2] && steps[i + 2].m.captured && i + 2 <= max) continue; // le gain continue au coup suivant
       end = i; break;
     }
     if (i >= 3 && bal >= 1 && s.m.color !== mover && !(next && next.m.captured)) { end = i; break; }
@@ -699,6 +716,28 @@ function withStory(reason, st) {
   return reason ? `${reason} : ${tail}` : tail;
 }
 
+// Le décompte de matériel n'est annoncé que si l'évaluation le confirme ; sinon on dit où mène la suite.
+function settle(st, score, mover, deficit) {
+  if (!st || st.mate || st.open || !st.outcome) return st;
+  const sign = mover === 'w' ? 1 : -1;
+  const cp = score.type === 'mate' ? (score.value * sign > 0 ? 1e5 : -1e5) : score.value * sign;
+  if (cp >= st.net * 50) return st;
+  if (Math.abs(cp) < 100) return { ...st, outcome: deficit ? 'la position redevient équilibrée' : 'la position reste équilibrée' };
+  return { ...st, outcome: '' };
+}
+
+// Ce qu'un camp a de moins que l'autre, pièce par pièce.
+function deficitOf(fen, color) {
+  const less = {}; const more = {};
+  for (const p of ['q', 'r', 'b', 'n', 'p']) {
+    const d = countType(fen, opp(color), p) - countType(fen, color, p);
+    if (d > 0) less[p] = d; else if (d < 0) more[p] = -d;
+  }
+  if (materialFor(fen, color) > -2) return null;
+  const extra = listPieces(more);
+  return `${listPieces(less)} de moins${extra ? ` (pour ${extra} de plus)` : ''}`;
+}
+
 const keyOf = (t) => t.split(' ').slice(0, 2).join(' ');
 const pick = (list, avoid) => list.find((t) => keyOf(t) !== avoid) || list[0] || '';
 
@@ -746,11 +785,12 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
     const strong = why.find((t) => STRONG.test(t));
     const chosen = strong || pick(describe(why), avoid);
     const showy = ['brilliant', 'great'].includes(move.kind);
-    const st = showy || (strong && /^ça gagne|^ça force le mat|tombe/.test(strong)) ? storyOf(fenBefore, playedLine, before, mover) : null;
+    const st = settle(showy || (strong && /^ça gagne|^ça force le mat|tombe|en même temps/.test(strong)) ? storyOf(fenBefore, playedLine, before, mover) : null, before.score, mover, false);
     // Le récit n'est ajouté que s'il apporte une étape : sacrifice, ou gain et mat qui n'arrivent pas tout de suite.
     // Avec une raison déjà dite, il doit aller jusqu'au bout (mat ou gain), sinon il s'arrêterait en l'air.
     const tell = st && st.text && (strong && !st.sac ? st.later && !st.open : st.sac || st.later || (showy && st.open));
-    const said = tell ? withStory(strong && !st.sac ? strong : '', strong && !st.sac ? { ...st, outcome: '' } : st) : chosen;
+    const keep = strong && /en même temps/.test(strong);
+    const said = tell ? withStory(strong && !st.sac ? strong : '', strong && !st.sac && !keep ? { ...st, outcome: '' } : st) : chosen;
     const details = showy || tell ? buildDetails({ fenBefore, mover, bestSteps: playedLine, playedLine, before, after, played: true, story: tell ? sentence(`En mots : ${withStory('', st)}`) : '' }) : null;
     return { sentences: [special, said ? sentence(said) : ''].filter(Boolean), notes: [], line: lineOf(playedLine.slice(1), 4), key: keyOf(chosen || ''), details };
   }
@@ -773,7 +813,8 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
   }
   const line = lineOf(bestSteps.slice(1), 4);
   if (!bestSteps.length) return { sentences: [...lead, ...reasons], notes: [], line };
-  const st = move.loss >= 5 ? storyOf(fenBefore, bestSteps, before, mover) : null;
+  const deficit = deficitOf(fenBefore, mover);
+  const st = settle(move.loss >= 5 ? storyOf(fenBefore, bestSteps, before, mover) : null, before.score, mover, !!deficit);
   const b0 = bestSteps[0].m;
   const action = st && st.sac ? `sacrifier ${le(b0.piece)} en ${tok(b0.to)}` : moveAction(b0);
   if (move.loss < 5) {
@@ -786,10 +827,16 @@ export function explainMove({ fenBefore, fenAfter, ply, before, after, move, ind
   const effect = !proven[0] ? purposes({ fenBefore, steps: bestSteps, mover, prev }).find((t) => !/^l’idée|^la réponse/.test(t)) || general[0] : '';
   let better;
   if (st && st.sac && st.text) better = `Mieux valait ${action} : ${withStory('', st)}.`;
+  else if (st && st.text && st.later && !st.open && proven[0] && /en même temps/.test(proven[0])) better = `Mieux valait ${action} : ${proven[0]}. ${cap(withStory('', st))}.`;
   else if (st && st.text && st.later && !st.open && proven[0] && /^ça gagne|^ça force le mat|tombe/.test(proven[0])) better = `Mieux valait ${action}, car ${withStory(proven[0], { ...st, outcome: '' })}.`;
   else better = `Mieux valait ${action}${proven[0] ? `, car ${proven[0]}` : effect ? ` : ${effect}` : ''}.`;
+  // Sans défaut concret dans le coup joué : on dit ce qui était en jeu.
+  if (!reasons.length && !special && deficit && st && st.text && st.outcome && st.later && !st.open && st.net >= 2 && move.loss >= 10) {
+    lead.push(`${Side(mover)} ont ${deficit} et pouvaient se rattraper ici.`);
+    if (!/en même temps|^ça gagne|^ça force le mat|tombe/.test(proven[0] || '')) better = `Mieux valait ${action} : ${withStory('', st)}.`;
+  }
   return {
-    sentences: [...reasons.slice(0, 2), special && !reasons.length ? special : '', better].filter(Boolean),
+    sentences: [...reasons.slice(0, 2), special && !reasons.length ? special : '', ...lead.filter((t) => t !== special), better].filter(Boolean),
     notes: [proven[1] ? `Et ${proven[1]}.` : '', general[0] && general[0] !== effect ? `Idée générale : ${general[0]}.` : ''].filter(Boolean),
     line,
     key: '',
