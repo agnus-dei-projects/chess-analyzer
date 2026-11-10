@@ -498,10 +498,12 @@ function reasonsFor(ctx) {
   const sh0 = kingShield(fenBefore, foe); const sh1 = kingShield(end, foe);
   const kingStill = (s) => allPieces(s).find((p) => p.type === 'k' && p.color === foe).square;
   const pawnTaken = steps.slice(0, 4).some((s) => s.m.color === mover && s.m.captured === 'p');
-  if (sh0 != null && sh1 != null && sh1 < sh0 && pawnTaken && kingStill(fenBefore) === kingStill(end)) out.push(`ça affaiblit les pions devant ${the('k', foe)}`);
-  if (m.captured && steps[1] && steps[1].m.piece === 'p' && steps[1].m.to === m.to && foe1.doubled > foe0.doubled) out.push('ça double les pions adverses');
-  if (me1.passed > me0.passed) out.push('ça crée un pion passé');
-  if (countType(fenBefore, foe, 'b') === 2 && countType(end, foe, 'b') === 1 && countType(end, mover, 'b') === 2 && !recapture) out.push('ça donne la paire de fous');
+  // Ces remarques n'ont de sens que si la suite ne perd pas de matériel par ailleurs.
+  const sound = realGain >= 0;
+  if (sound && sh0 != null && sh1 != null && sh1 < sh0 && pawnTaken && kingStill(fenBefore) === kingStill(end)) out.push(`ça affaiblit les pions devant ${the('k', foe)}`);
+  if (sound && m.captured && steps[1] && steps[1].m.piece === 'p' && steps[1].m.to === m.to && foe1.doubled > foe0.doubled) out.push('ça double les pions adverses');
+  if (sound && me1.passed > me0.passed) out.push('ça crée un pion passé');
+  if (sound && countType(fenBefore, foe, 'b') === 2 && countType(end, foe, 'b') === 1 && countType(end, mover, 'b') === 2 && !recapture) out.push('ça donne la paire de fous');
   if (m.captured && !recapture && materialFor(fenBefore, mover) >= 2 && !ex.net) out.push('avec du matériel en plus, chaque échange rapproche de la victoire');
 
   if (m.san.startsWith('O-O')) out.push('ça met le roi à l’abri et rapproche la tour du jeu');
@@ -924,6 +926,18 @@ function explainMoveInner({ fenBefore, fenAfter, ply, before, after, move, index
     const ref = move.playedBest ? before : { score: after.score, threat: null };
     const why = reasonsFor({ fenBefore, steps: playedLine, mover, moveNumber, mateIn: mateFor(ref.score), prev, score: ref.score, threat: ref.threat, playedRecapture: true, alt: move.playedBest ? walk(fenBefore, before.pv || []) : null });
     const strong = why.find((t) => STRONG.test(t));
+    // Le meilleur coup disponible perd quand même du matériel : on le dit, avec la suite qui le montre.
+    if (move.playedBest && !strong && playedLine.length > 1) {
+      const foe = opp(mover);
+      const L = settle(narrate(fenBefore, playedLine, foe, { max: 7, mateIn: after.score.type === 'mate' && after.score.value * -sign > 0 ? after.score.value * -sign : 0 }), after.score, foe, false);
+      // Seulement si le moteur juge la position nettement défavorable : sinon ce n'est qu'une suite d'échanges.
+      const bad = after.score.type === 'mate' ? after.score.value * sign < 0 : after.score.value * sign <= -100;
+      if (bad && L && L.text && !L.open && (L.mate || (L.outcome && !/équilibrée/.test(L.outcome) && L.net >= 2))) {
+        const details = buildDetails({ fenBefore, mover, bestSteps: playedLine, playedLine, before: ref, after, played: true, story: '' });
+        const tail = L.end <= 5 ? withStory('', L) : (L.outcome ? `${L.outcome} dans la suite` : 'le mat suit');
+        return { sentences: [sentence(`c’est le moindre mal : ${tail}`)], notes: [], line: lineOf(playedLine.slice(1), 4), key: 'moindre-mal', details };
+      }
+    }
     const chosen = strong || pick(describe(why), avoid);
     const showy = ['brilliant', 'great'].includes(move.kind);
     const st = settle(showy || (strong && /^ça gagne|^ça force le mat|tombe|en même temps/.test(strong)) ? storyOf(fenBefore, playedLine, ref, mover) : null, ref.score, mover, false);

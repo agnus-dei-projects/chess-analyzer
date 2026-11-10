@@ -136,5 +136,23 @@
   "mustNot": [
    "continuer par"
   ]
+ },
+ {
+  "name": "20…Qxd5 — meilleur coup qui perd quand même la dame",
+  "fen": "rr6/pRp2p2/3bkBb1/1B1P2Pp/4p3/2P1P2P/q4P2/3QK2R b K - 0 20",
+  "uci": "a2d5",
+  "prev": {
+   "to": "d5",
+   "captured": null,
+   "uci": "d4d5"
+  },
+  "must": [
+   "moindre mal",
+   "\\[\\[d7\\]\\]",
+   "dame"
+  ],
+  "mustNot": [
+   "paire de fous"
+  ]
  }
 ]
