@@ -1284,6 +1284,12 @@ boardEl.addEventListener('touchend', (e) => {
 
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Une nouvelle version qui arrive à l'ouverture recharge la page une fois, pour s'afficher tout de suite.
+  // Passé les premières secondes, on ne recharge plus : pas question d'interrompre une analyse ou un exercice.
+  if (navigator.serviceWorker.controller) {
+    const opened = Date.now();
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (Date.now() - opened < 15000) location.reload(); }, { once: true });
+  }
 }
 $('flip').addEventListener('click', () => { state.flipped = !state.flipped; renderBoard(); });
 

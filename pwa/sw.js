@@ -23,7 +23,8 @@ self.addEventListener('activate', (e) => {
 
 // Réseau d'abord pour la page, mais sans attendre plus de 3 s une connexion qui traîne.
 function page(req) {
-  const net = fetch(req).then((res) => {
+  // Sans passer par le cache du navigateur : une mise en ligne se voit dès l'ouverture suivante.
+  const net = fetch(req.url, { cache: 'no-store' }).then((res) => {
     if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put('./', copy)); }
     return res;
   });
