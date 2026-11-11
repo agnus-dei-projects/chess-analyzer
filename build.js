@@ -4,7 +4,11 @@ const r = (p) => fs.readFileSync(p);
 const js = esbuild.buildSync({ entryPoints: ['src/main.js'], bundle: true, minify: true, format: 'iife', write: false, target: 'es2020', define: { __AUDIT__: process.env.AUDIT ? 'true' : 'false' } }).outputFiles[0].text.replace(/<\/script/g, '<\\/script');
 const a = 'node_modules/chessground/assets/';
 const css = r(a + 'chessground.base.css').toString() + r(a + 'chessground.cburnett.css').toString();
+// Numéro de version affiché dans le menu : date et heure de la construction (heure de Paris).
+const stamp = Object.fromEntries(new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date()).map((x) => [x.type, x.value]));
+const appVersion = process.env.APP_VERSION || `${stamp.year}.${stamp.month}.${stamp.day}-${stamp.hour}${stamp.minute}`;
 const out = r('src/template.html').toString()
+  .replace('__APP_VERSION__', () => appVersion)
   .replace('/*CHESSGROUND*/', () => css)
   .replace('/*BUNDLE*/', () => js);
 const crypto = require('crypto');
@@ -36,4 +40,4 @@ esbuild.buildSync({ entryPoints: ['src/maia.js'], bundle: true, minify: true, fo
 esbuild.buildSync({ entryPoints: ['src/maia-worker.js'], bundle: true, minify: true, format: 'esm', outfile: 'dist/app/maia/maia-worker.mjs', external: ['onnxruntime-node'], alias: { 'onnxruntime-web': 'onnxruntime-web/wasm' }, target: 'es2020' });
 fs.copyFileSync('node_modules/maia3-js/models/maia3_5m.onnx', 'dist/app/maia/m.onnx');
 for (const f of ['ort-wasm-simd-threaded.wasm', 'ort-wasm-simd-threaded.mjs']) fs.copyFileSync('node_modules/onnxruntime-web/dist/' + f, 'dist/app/maia/' + f);
-console.log((out.length / 1e6).toFixed(2) + ' MB');
+console.log((out.length / 1e6).toFixed(2) + ' MB, version ' + appVersion);

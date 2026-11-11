@@ -357,6 +357,8 @@ a { color: inherit; text-decoration: none; }
 #screen-train .trainer { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }
 .t-head { display: flex; align-items: center; gap: 10px; }
 .t-head > div:first-child { flex: 1; min-width: 0; }
+/* Numéro de version, en bas à gauche du menu : il dit quelle mise en ligne est chargée. */
+#app-version { position: fixed; left: max(12px, env(safe-area-inset-left, 0px)); bottom: calc(8px + env(safe-area-inset-bottom, 0px)); margin: 0; font: 400 11px var(--mono); color: var(--muted); }
 #t-title { display: none; }
 #t-sub { font-size: 13px; color: var(--muted); margin: 0; }
 .t-elo { text-align: right; flex: none; }
@@ -610,6 +612,7 @@ td:last-child { text-align: right; }
     <a class="big-tile" href="#parties"><span class="big-ic" aria-hidden="true">♞</span><span><strong>Analyse de partie</strong><small>Tes parties Chess.com, coup par coup, commentées</small></span></a>
     <a class="big-tile" href="#exercices"><span class="big-ic" aria-hidden="true">♛</span><span><strong>Exercices</strong><small>Problèmes et mises en situation</small></span></a>
   </div>
+  <p id="app-version">Version 2026.11.11-1424</p>
 </section>
 
 <section id="screen-hub" class="screen" hidden>
