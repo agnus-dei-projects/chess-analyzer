@@ -442,7 +442,8 @@ function chartScale() {
   const svg = $('chart');
   const W = svg.clientWidth || 340;
   const H = svg.clientHeight || 140;
-  const n = state.game ? state.game.plies.length : 1;
+  // Une partie sans coup (« Rejouer » lancé depuis le début) garde une échelle valide.
+  const n = Math.max(1, state.game ? state.game.plies.length : 1);
   return {
     W, H,
     x: (i) => PAD.l + (i / n) * (W - PAD.l - PAD.r),

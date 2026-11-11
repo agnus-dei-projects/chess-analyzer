@@ -16,6 +16,8 @@ for (const s of SITUATIONS) {
   check(s.lossAt < s.capDraw && s.capDraw <= s.capWin && s.capWin < s.winAt, `${s.id} : seuils dans l'ordre perte < moyen ≤ réussite < gain`);
   check(s.cap >= 20 && s.cap % 2 === 0, `${s.id} : limite de coups paire et suffisante`);
   check(new Set(list.map((p) => p.fen)).size === list.length, `${s.id} : pas de position en double`);
+  const whites = list.filter((p) => p.fen.split(' ')[1] === 'w').length;
+  check(whites >= list.length / 4 && whites <= (list.length * 3) / 4, `${s.id} : le joueur a tantôt les Blancs, tantôt les Noirs (${whites} sur ${list.length})`);
   for (const p of list) {
     let c = null; try { c = new Chess(p.fen); } catch { /* signalé ci-dessous */ }
     check(c && !c.isGameOver() && c.moves().length > 0, `${s.id} : position jouable ${p.fen}`);
