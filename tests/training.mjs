@@ -31,10 +31,29 @@ const a = Z.fromRow({ ...ROW, Themes: ['mate', 'mateIn2'] }); const b = Z.fromRo
 check(Z.validPuzzle(a) && a.solution.length === 3 && a.lastMove === 'b7b6', 'ligne de la base lue');
 check(JSON.stringify(a.themes) === JSON.stringify(b.themes), 'thèmes lus en liste comme en texte');
 check(!Z.validPuzzle({ ...a, solution: ['d2d7', 'a8d8'] }) && !Z.validPuzzle({ ...a, start: 'n’importe quoi' }) && !Z.validPuzzle(null) && !Z.validPuzzle({ ...a, solution: [] }), 'problème injouable refusé');
+// Les quatre lignes d'exemple publiées par Lichess avec le format de sa base (database.lichess.org, section Puzzles ;
+// source : github.com/lichess-org/database, web/index.html.tpl). La position donnée précède le coup adverse,
+// le premier coup s'applique, la solution commence au second ; les thèmes sont un texte séparé par des espaces.
+const SAMPLES = `00sHx,q3k1nr/1pp1nQpp/3p4/1P2p3/4P3/B1PP1b2/B5PP/5K2 b k - 0 17,e8d7 a2e6 d7d8 f7f8,1760,80,83,72,mate mateIn2 middlegame short
+00sJ9,r3r1k1/p4ppp/2p2n2/1p6/3P1qb1/2NQR3/PPB2PP1/R1B3K1 w - - 5 18,e3g3 e8e1 g1h2 e1c1 a1c1 f4h6 h2g1 h6c1,2671,105,87,325,advantage attraction fork middlegame sacrifice veryLong
+00sJb,Q1b2r1k/p2np2p/5bp1/q7/5P2/4B3/PPP3PP/2KR1B1R w - - 1 17,d1d7 a5e1 d7d1 e1e3 c1b1 e3b6,2235,76,97,64,advantage fork long
+00sO1,1k1r4/pp3pp1/2p1p3/4b3/P3n1P1/8/KPP2PN1/3rBR1R b - - 2 31,b8c7 e1a5 b7b6 f1d1,998,85,94,293,advantage discoveredAttack master middlegame short`;
+for (const line of SAMPLES.split('\n')) {
+  const [PuzzleId, FEN, Moves, Rating, RatingDeviation, Popularity, NbPlays, Themes] = line.split(',');
+  const p = Z.fromRow({ PuzzleId, FEN, Moves, Rating: +Rating, RatingDeviation: +RatingDeviation, Popularity: +Popularity, NbPlays: +NbPlays, Themes });
+  const c = new Chess(p.start); p.solution.forEach((u) => c.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] }));
+  check(Z.validPuzzle(p) && p.solution.length % 2 === 1 && p.themes.length >= 3 && (!p.themes.includes('mate') || c.isCheckmate()), `exemple officiel de la base Lichess ${PuzzleId} : lu, solution jouable${p.themes.includes('mate') ? ' et qui finit par un mat' : ''}`);
+}
 const LI = { game: { pgn: 'e4 e5 Qh5 Nc6 Bc4 Nf6' }, puzzle: { id: 'li', rating: 700, solution: ['h5f7'], themes: ['mateIn1'], initialPly: 5 } };
 const l1 = Z.fromLichess(LI);
 const l2 = Z.fromLichess({ game: {}, puzzle: { ...LI.puzzle, fen: l1.start, lastMove: 'g8f6' } });
-check(Z.validPuzzle(l1) && l1.lastMove === 'g8f6' && l1.start === l2.start, 'problème Lichess lu avec ou sans position fournie');
+check(Z.validPuzzle(l1) && l1.lastMove === 'g8f6' && l1.start === l2.start, 'problème Lichess lu depuis la partie, ou depuis la position fournie');
+// Exemple officiel de réponse, copié de la description de l'API Lichess (github.com/lichess-org/api,
+// doc/specs/examples/puzzles-getNewPuzzle.json.yaml). Sa position fournie ne correspond pas à sa partie :
+// la partie doit l'emporter.
+const OFFICIAL = { game: { pgn: 'd4 d5 Nf3 e6 c4 Nf6 Nc3 Be7 Bg5 b6 e3 Bb7 Bd3 Nbd7 O-O O-O Rc1 Rc8 Qe2 Ne4 Bf4 c5 Rfd1 cxd4 exd4 f5 h3 Qe8 cxd5 exd5 Nb5 Qg6 a3 a6 Nc3 b5 Ne5 Nxe5 Bxe5 Bf6 Na2 Rfe8 Bxf6 Qxf6 Rxc8 Bxc8 Qc2 h6 f3 Ng5 Kh1 f4 Nc3 Bb7 Qf2 Re3 Bb1 Qe6 Qh4 Qf6 Ba2 Qf5 Bb1 Qf6 Ba2 Qf5 Bb1 Qf7 Qf2 Qh5 Kh2 Bc8 Nxd5 Bxh3 Nxe3' }, puzzle: { id: 'G9itW', rating: 1873, plays: 313, solution: ['h3g2', 'h2g2', 'h5h3', 'g2g1', 'g5f3', 'f2f3', 'h3f3'], themes: ['middlegame', 'crushing', 'attraction', 'sacrifice', 'discoveredAttack', 'deflection', 'veryLong'], fen: 'r1bqr1k1/pp3ppp/2p2n2/3p2B1/8/2P1P3/PP1N1PPb/1BRQ1RK1 w - - 0 1', lastMove: 'e5h2', initialPly: 74 } };
+const off = Z.fromLichess(OFFICIAL);
+check(Z.validPuzzle(off) && off.lastMove === 'd5e3' && new Chess(off.start).turn() === 'b' && off.solution.length === 7, 'exemple officiel de l’API Lichess : lu, solution jouable jusqu’au bout');
 
 // 3. Réserve de problèmes : panne de la base, entrées abîmées, tout en panne.
 const mem = () => { const m = new Map(); return { get: (k) => (m.has(k) ? m.get(k) : null), set: (k, v) => m.set(k, v) }; };

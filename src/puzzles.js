@@ -45,19 +45,21 @@ export function fromRow(row) {
   return { id: row.PuzzleId, start: c.fen(), lastMove: moves[0], solution: moves.slice(1), rating: row.Rating, themes };
 }
 
-// Lichess donne la position de départ soit directement, soit par la partie rejouée jusqu'au coup du problème.
+// Lichess donne toujours la partie d'origine et le rang du dernier coup avant le problème, et parfois en plus
+// la position toute faite. La partie fait foi ; la position fournie ne sert que si la partie ne donne rien de jouable.
 export function fromLichess(j) {
-  let start = j.puzzle.fen;
-  let { lastMove } = j.puzzle;
-  if (!start || !lastMove) {
+  const z = j.puzzle;
+  const make = (start, lastMove) => ({ id: z.id, start, lastMove, solution: z.solution, rating: z.rating, themes: z.themes || [] });
+  let fromGame = null;
+  try {
     const c = new Chess();
     c.loadPgn(j.game.pgn);
     const all = c.history({ verbose: true });
-    const last = all[j.puzzle.initialPly] || all[all.length - 1];
-    start = last.after;
-    lastMove = last.from + last.to + (last.promotion || '');
-  }
-  return { id: j.puzzle.id, start, lastMove, solution: j.puzzle.solution, rating: j.puzzle.rating, themes: j.puzzle.themes || [] };
+    const last = all[z.initialPly] || all[all.length - 1];
+    fromGame = make(last.after, last.from + last.to + (last.promotion || ''));
+  } catch { fromGame = null; }
+  if (validPuzzle(fromGame)) return fromGame;
+  return make(z.fen, z.lastMove);
 }
 
 export function createPool(store) {
