@@ -53,15 +53,18 @@ Un bot imite un vrai joueur à partir de ses parties. Le modèle (`src/bots/<nom
 
 jakbot, construit sur 104 parties rapides (10 min) de juin à octobre 2026, 4 346 coups. Mesures sur des parties mises de côté (5 groupes) :
 
-| | Son coup = premier choix du modèle |
-|---|---|
-| Maia à son Elo, sans le fil de la partie | 55,8 % |
-| Maia à son Elo, avec le fil de la partie | 57,9 % |
-| Dans son répertoire : Maia / répertoire | 48 % / 97 % |
-| Bot complet (répertoire + Maia) | 62,8 % |
+| | Son coup = premier choix du modèle | Son coup = coup joué par le bot |
+|---|---|---|
+| Maia à son Elo, sans le fil de la partie | 55,8 % | |
+| Maia à son Elo, avec le fil de la partie | 57,9 % | |
+| Bot, répertoire des 6 mois, netteté 1,75 | 62,7 % | 58,4 % |
+| Bot actuel : répertoire à deux étages, netteté 3 | 63,4 % | 61,6 % |
 
-- Netteté 1,75 : le bot perd en moyenne 0,52 pion par coup et 15,3 % de ses coups perdent au moins un pion, contre 0,51 et 15,3 % pour le joueur (Stockfish profondeur 10). Son coup est alors celui que tire le bot environ 54 % du temps hors répertoire, contre 48 % sans réglage.
-- Essayé et écarté : repondérer les coups par des habitudes de jeu (échanges, échecs, pièces jouées, roques, jugement du moteur). Sur ces 104 parties, cela n'a pas rapproché le bot du joueur (59,0 % dans les deux cas hors répertoire).
+- **Répertoire à deux étages** : les 6 derniers mois d'abord (885 positions) ; à défaut, les positions de ses parties rapides et blitz depuis juin 2024 (1 709 parties) vues au moins deux fois et où il joue le même coup au moins 7 fois sur 10 (815 positions). Le répertoire couvre 13,5 % de ses coups (10,1 % avant) et il y joue le coup prévu 95 % du temps.
+- **Netteté 3** : le bot joue plus souvent le premier choix de Maia. Contrepartie mesurée : il se trompe un peu moins que le joueur (13,9 % de coups perdant au moins un pion contre 15,3 %, Stockfish profondeur 10) et varie moins. À 1,75 les taux d'erreur étaient égaux, mais son coup était moins souvent celui du bot.
+- **Plafond** : hors répertoire, le premier choix de Maia est son coup 58,4 % du temps, et son coup est parmi les trois premiers choix 86 % du temps. Maia elle-même n'accorde en moyenne que 60 % à son premier choix : dans la plupart des positions, plusieurs coups sont plausibles pour un même joueur.
+- Essayé et écarté, faute de gain mesurable : repondérer les coups par des habitudes de jeu (échanges, échecs, pièces jouées, roques, jugement du moteur) ; régler Maia sur un autre Elo que le sien (1900, 2400, 2700).
+- Non essayé : les modèles Maia plus gros (23M, 79M), et un réentraînement de Maia sur ses parties (la publication de référence n'obtient un gain, de 4 à 5 points, qu'à partir de 5 000 parties par joueur).
 
 Pour refaire ou ajouter un bot : `tests/bots/` (étapes numérotées en tête de chaque fichier). Les parties viennent de l'API publique de Chess.com et ne sont pas dans le dépôt.
 
