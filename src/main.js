@@ -1333,13 +1333,14 @@ const SCREENS = {
   analyse: { id: 'analyse', tab: 'analyse', title: 'Analyse de partie', back: () => (phone() ? 'parties' : '') },
   bilan: { id: 'analyse', tab: 'bilan', title: 'Analyse de partie', back: () => (phone() ? 'analyse' : '') },
   exercices: { id: 'hub', title: 'Exercices', back: () => '' },
+  bots: { id: 'bots', title: 'Affronte un bot', back: () => '' },
   problemes: { id: 'train', title: 'Problèmes', back: () => 'exercices' },
 };
 function route() {
   const key = location.hash.slice(1);
   if (key === 'analyse' && !state.game) { location.replace('#parties'); return; }
-  const sit = key.startsWith('situation-') ? key.slice(10) : null;
-  const def = sit ? { id: 'train', title: trainer.titleOf(sit), back: () => 'exercices' } : (SCREENS[key] || SCREENS['']);
+  const sit = key.startsWith('situation-') ? key.slice(10) : key.startsWith('bot-') ? `bot:${key.slice(4)}` : null;
+  const def = sit ? { id: 'train', title: trainer.titleOf(sit), back: () => (sit.startsWith('bot:') ? 'bots' : 'exercices') } : (SCREENS[key] || SCREENS['']);
   document.body.dataset.screen = def.id;
   document.querySelectorAll('.screen').forEach((s) => { s.hidden = s.id !== `screen-${def.id}`; });
   $('bar-title').textContent = def.title;
@@ -1352,7 +1353,7 @@ function route() {
   $('bar-resume').hidden = !state.game || key === 'analyse';
   voice.stop();
   if (def.tab) setTab(def.tab);
-  if (def.id === 'hub' || def.id === 'home') trainer.renderHub();
+  if (def.id === 'hub' || def.id === 'home' || def.id === 'bots') trainer.renderHub();
   if (def.id === 'train') trainer.open(sit || 'puzzle'); else trainer.close();
   if (def.id === 'analyse') { cg.redrawAll(); renderChart(); }
 }

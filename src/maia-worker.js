@@ -16,6 +16,11 @@ self.onmessage = async ({ data }) => {
     } else if (type === 'move') {
       const r = await maia.predict({ fen: data.fen, selfElo: data.selfElo, oppoElo: data.oppoElo, temperature: data.temperature, topP: 0.98 });
       self.postMessage({ id, ok: true, move: r.bestMove });
+    } else if (type === 'policy') {
+      // Toutes les probabilités de coups, sans tirage : la page choisit elle-même (bots au style personnalisé).
+      // priorFens : jusqu'à 8 positions précédentes, de la plus ancienne à la plus récente (Maia tient compte du fil de la partie).
+      const r = await maia.predict({ fen: data.fen, priorFens: data.priorFens && data.priorFens.length ? data.priorFens : undefined, selfElo: data.selfElo, oppoElo: data.oppoElo, temperature: 1, topP: 1, topK: 0 });
+      self.postMessage({ id, ok: true, moves: [...r.moves.entries()] });
     }
   } catch (err) {
     self.postMessage({ id, ok: false, error: String((err && err.message) || err) });

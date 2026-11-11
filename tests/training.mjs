@@ -65,5 +65,26 @@ net('down', 'down'); { let failed = false; try { await Z.createPool(mem()).next(
 { const st = mem(); st.set('puzzle-pool', JSON.stringify([a])); check((await Z.createPool(st).next(800)).id === 'a', 'hors connexion : la réserve suffit'); }
 const e = Z.updateElo({ r: 800, n: 0 }, 800, 1); check(e.r === 820 && e.delta === 20, 'Elo : +20 pour une première réussite à niveau égal');
 
+// 4. Bots : le modèle de jakbot est cohérent et le choix des coups suit ses règles.
+const BOT = await load('bot.js');
+const JAK = JSON.parse(fs.readFileSync(path.join(root, 'src/bots/jakbot.json')));
+const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+let illegal = 0;
+for (const [key, moves] of Object.entries(JAK.book)) {
+  const c = new Chess(`${key} 0 1`); const legal = new Set(c.moves({ verbose: true }).map((m) => m.from + m.to + (m.promotion || '')));
+  for (const u of Object.keys(moves)) if (!legal.has(u)) illegal += 1;
+}
+check(illegal === 0 && Object.keys(JAK.book).length > 100, `jakbot : tous les coups du répertoire sont légaux (${Object.keys(JAK.book).length} positions)`);
+check(JAK.elo >= 2000 && JAK.alpha >= 1 && JAK.alpha <= 3 && JAK.tempo.length >= 6, 'jakbot : Elo, netteté et rythme renseignés');
+const firsts = new Set(); for (let i = 0; i < 200; i += 1) firsts.add(BOT.bookMove(JAK, START, () => i / 200));
+check(firsts.size === 2 && firsts.has('d2d4'), 'jakbot ouvre par 1.d4 (et très rarement par un autre coup, comme dans ses parties)');
+const afterE4 = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+check(BOT.bookMove(JAK, afterE4, () => 0.5) === 'e7e6', 'jakbot répond 1...e6 à 1.e4');
+check(BOT.bookMove(JAK, '8/8/8/4k3/8/8/4K3/8 w - - 0 1') === null, 'hors répertoire : pas de coup de répertoire');
+const pol = [['a2a3', 0.5], ['b2b3', 0.3], ['c2c3', 0.195], ['h2h4', 0.005]];
+const draws = { }; for (let i = 0; i < 2000; i += 1) { const u = BOT.pickFromPolicy(JAK, pol, () => (i + 0.5) / 2000); draws[u] = (draws[u] || 0) + 1; }
+check(!draws.h2h4 && draws.a2a3 / 2000 > 0.5 && draws.c2c3 > 0, 'tirage : les coups jugés improbables par Maia sont écartés, la netteté favorise le premier choix sans supprimer les autres');
+const t = [0, 20, 60].map((ply) => BOT.thinkMs(JAK, ply, () => 0.5)); check(t.every((x) => x >= 400 && x <= 3500) && t[1] > t[0], 'rythme : il réfléchit plus en milieu de partie qu’à l’ouverture, dans des limites raisonnables');
+
 console.log(bad ? `${bad} contrôle(s) en échec` : 'Mode entraînement : tous les contrôles passent');
 process.exit(bad ? 1 : 0);

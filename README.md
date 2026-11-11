@@ -43,6 +43,28 @@ Règles du mode entraînement que ces tests protègent :
 - Un verdict donné par l'évaluation doit tenir deux tours de suite ; après le verdict, la partie peut se poursuivre librement jusqu'au mat.
 - Après trois essais manqués sur une même position, on peut en changer.
 
+## Bots (« Affronte un bot »)
+
+Un bot imite un vrai joueur à partir de ses parties. Le modèle (`src/bots/<nom>.json`) contient trois choses, et rien d'autre : ni parties, ni pseudo.
+
+- **Répertoire d'ouvertures** : pour chaque position qu'il a rencontrée en début de partie (ou au moins deux fois), les coups qu'il a joués et leur fréquence. Le bot tire selon ces fréquences.
+- **Elo et netteté** : hors répertoire, le bot tire un coup de Maia à l'Elo du joueur, en lui donnant le fil de la partie (8 dernières positions). La netteté du tirage est réglée pour que le bot se trompe aussi souvent que le joueur.
+- **Rythme** : le temps de réflexion affiché suit son temps médian par coup selon le stade de la partie, réduit.
+
+jakbot, construit sur 104 parties rapides (10 min) de juin à octobre 2026, 4 346 coups. Mesures sur des parties mises de côté (5 groupes) :
+
+| | Son coup = premier choix du modèle |
+|---|---|
+| Maia à son Elo, sans le fil de la partie | 55,8 % |
+| Maia à son Elo, avec le fil de la partie | 57,9 % |
+| Dans son répertoire : Maia / répertoire | 48 % / 97 % |
+| Bot complet (répertoire + Maia) | 62,8 % |
+
+- Netteté 1,75 : le bot perd en moyenne 0,52 pion par coup et 15,3 % de ses coups perdent au moins un pion, contre 0,51 et 15,3 % pour le joueur (Stockfish profondeur 10). Son coup est alors celui que tire le bot environ 54 % du temps hors répertoire, contre 48 % sans réglage.
+- Essayé et écarté : repondérer les coups par des habitudes de jeu (échanges, échecs, pièces jouées, roques, jugement du moteur). Sur ces 104 parties, cela n'a pas rapproché le bot du joueur (59,0 % dans les deux cas hors répertoire).
+
+Pour refaire ou ajouter un bot : `tests/bots/` (étapes numérotées en tête de chaque fichier). Les parties viennent de l'API publique de Chess.com et ne sont pas dans le dépôt.
+
 ## Signalements
 
 Le bouton « Signaler ce commentaire » garde le signalement sur l'appareil (réglages, « Signalements »). « Tout copier » les exporte en un bloc. Avec un jeton GitHub limité aux tickets de ce dépôt, saisi dans les réglages et gardé sur l'appareil, ils sont envoyés comme tickets « [Signalement] ».

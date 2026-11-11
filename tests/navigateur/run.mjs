@@ -7,7 +7,7 @@ execFileSync('node', ['build.js'], { cwd: root, env: { ...process.env, AUDIT: '1
 const server = spawn('node', [path.join(here, 'serveur.mjs'), path.join(root, 'dist/app'), port], { stdio: 'ignore' });
 await new Promise((r) => { setTimeout(r, 800); });
 let bad = 0;
-for (const f of ['pannes.mjs', 'parcours.mjs']) {
+for (const f of ['pannes.mjs', 'parcours.mjs', 'bot.mjs']) {
   const code = await new Promise((r) => { spawn('node', [path.join(here, f)], { stdio: 'inherit', env: { ...process.env, BASE: `http://localhost:${port}/` } }).on('exit', r); });
   if (code) bad += 1;
 }

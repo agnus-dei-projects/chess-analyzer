@@ -169,3 +169,14 @@ export async function move(fen, selfElo, oppoElo, temperature) {
     throw err;
   }
 }
+
+// Probabilité de chaque coup légal selon Maia, sous forme de liste [coup, probabilité].
+export async function policy(fen, selfElo, oppoElo, priorFens) {
+  if (!worker) throw new Error('Maia indisponible');
+  try {
+    return (await within(call({ type: 'policy', fen, selfElo, oppoElo, priorFens }), MOVE_MS, 'Maia ne répond plus')).moves;
+  } catch (err) {
+    if (err.timeout) reset(err);
+    throw err;
+  }
+}

@@ -71,11 +71,12 @@ export class Engine {
   }
 
   // Les meilleurs coups de la position, du point de vue du camp au trait.
-  async candidates(fen, moves, depth, count) {
+  // only : limite la recherche à ces coups (ils sont alors tous évalués).
+  async candidates(fen, moves, depth, count, only) {
     await this.send(`setoption name MultiPV value ${count}`);
     this.multi = new Map();
     await this.send(`position fen ${fen}${moves.length ? ` moves ${moves.join(' ')}` : ''}`);
-    await this.send(`go depth ${depth}`, 'bestmove');
+    await this.send(`go depth ${depth}${only && only.length ? ` searchmoves ${only.join(' ')}` : ''}`, 'bestmove');
     const found = [...this.multi.values()];
     this.multi = null;
     await this.send('setoption name MultiPV value 1');

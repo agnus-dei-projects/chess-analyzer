@@ -6,6 +6,14 @@ import { pickHuman, toWhiteScore } from './analysis.js';
 import { within } from './within.js';
 import { explainWrongMove } from './explain.js';
 import POSITIONS from './situations.json';
+import { bookMove, pickFromPolicy, thinkMs } from './bot.js';
+import JAKBOT from './bots/jakbot.json';
+
+// Bots : chacun imite un vrai joueur, d'après ses parties (voir tests/bots/ pour la construction du modèle).
+export const BOTS = [
+  { id: 'jakbot', name: 'jakbot', icon: '♚', elo: JAKBOT.elo, blurb: `Imite un vrai joueur d’environ ${JAKBOT.elo} Elo en rapide : ses ouvertures, ses habitudes, sa précision.`, model: JAKBOT },
+];
+const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 export const SITUATIONS = [
   { id: 'pawn', icon: '♟', title: 'Finale de pions', goal: 'Gagne cette finale.', blurb: 'Roi et pions : opposition, pion passé, course à la promotion.', cap: 80, winAt: 1500, lossAt: -700, capWin: 700, capDraw: 0 },
@@ -322,7 +330,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     const user = c.turn();
     Object.assign(P, {
       def, id, c, user, my, ply: 0, done: false, startFen: item.fen, thinking: true, orient: colorName(user), lastPlayed: null,
-      retry: !!current.rated, tries: current.tries || 0, free: false, verdict: 0, streak: 0, result: null, maia: true,
+      retry: !!current.rated, tries: current.tries || 0, free: false, verdict: 0, streak: 0, result: null, maia: true, bot: null,
     });
     setBoard(c, P.orient, null, false);
     msg('Chargement de l’adversaire…');
@@ -357,6 +365,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
   const abandon = () => ['Abandonner cet essai', () => endSituation(0, 'Essai abandonné.', false)];
   const sideName = () => (P.user === 'w' ? 'Blancs' : 'Noirs');
   const subtitle = () => {
+    if (P.bot) { head(P.bot.name, `Tu as les ${sideName()}${P.maia ? '' : ' · moteur seul'} · ${recordText(P.id)}`); return; }
     const rival = `Adversaire ${getElo(P.id).r}${P.maia ? '' : ' (moteur)'}`;
     if (P.free) { head(P.def.title, `Partie libre · ${rival} · ${sideName()}`); return; }
     const left = Math.max(0, Math.ceil((P.def.cap - P.ply) / 2));
@@ -392,8 +401,12 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
   // puis le moteur prend le relais avec un coup « humain » tiré parmi ses meilleurs.
   async function opponentMove(my) {
     const fen = P.c.fen();
-    const elo = getElo(P.id).r;
-    for (let attempt = 0; P.maia && attempt < 2; attempt += 1) {
+    if (P.bot) {
+      const u = await botMove(my);
+      if (u || my !== session) return u;
+    }
+    const elo = P.bot ? P.bot.elo : getElo(P.id).r;
+    for (let attempt = 0; !P.bot && P.maia && attempt < 2; attempt += 1) {
       try {
         const m = await ensureMaia();
         if (my !== session) return null;
@@ -410,6 +423,33 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     const best = (await compute(my, (e) => e.evaluate(fen, 8))).best;
     if (!legalIn(fen, best)) throw new Error('aucun coup trouvé');
     return best;
+  }
+
+  // Coup d'un bot : son répertoire d'ouvertures d'abord, puis un coup de Maia à son Elo, tiré avec sa netteté.
+  // Renvoie null si Maia est indisponible (le moteur prend alors le relais).
+  async function botMove(my) {
+    const { model, elo } = P.bot;
+    const fen = P.c.fen();
+    const t0 = Date.now();
+    const wait = thinkMs(model, P.ply);
+    let uci = bookMove(model, fen);
+    if (!uci) {
+      let policy = null;
+      // Maia tient compte du fil de la partie : on lui donne les 8 dernières positions.
+      const prior = P.c.history({ verbose: true }).slice(-8).map((m) => m.before);
+      for (let attempt = 0; P.maia && !policy && attempt < 2; attempt += 1) {
+        try {
+          const m = await ensureMaia();
+          if (my !== session) return null;
+          policy = (await m.policy(fen, elo, elo, prior)).filter((x) => legalIn(fen, x[0]));
+        } catch { policy = null; }
+        if (my !== session) return null;
+      }
+      if (!policy || !policy.length) { P.maia = false; return null; }
+      uci = pickFromPolicy(model, policy);
+    }
+    await pause(Math.max(0, wait - (Date.now() - t0)));
+    return my === session ? uci : null;
   }
 
   async function onSituationMove(orig, dest) {
@@ -433,6 +473,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     P.lastPlayed = orig + dest + (promo || '');
     P.thinking = true;
     setBoard(P.c, P.orient, P.lastPlayed, false);
+    saveBotGame();
     const end = gameEnd(P.c);
     if (end) { endSituation(end[0], end[1], true); return; }
     await opponentTurn(my);
@@ -441,8 +482,8 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
   async function opponentTurn(my) {
     if (my !== session || P.done) return;
     P.thinking = true;
-    msg('L’adversaire réfléchit…');
-    actions(P.free ? afterActions() : [abandon()]);
+    msg(P.bot ? `${P.bot.name} réfléchit…` : 'L’adversaire réfléchit…');
+    actions(liveActions());
     await pause(250);
     if (my !== session) return;
     let reply;
@@ -450,7 +491,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
       // Ni Maia ni le moteur ne répondent : la partie est gardée telle quelle, on peut relancer l'adversaire.
       if (my !== session) return;
       msg(`L’adversaire ne répond plus (${reason(err)}). La partie est conservée.`, 'bad');
-      actions([['Relancer l’adversaire', () => opponentTurn(my), true], ...(P.free ? afterActions() : [abandon()])]);
+      actions([['Relancer l’adversaire', () => opponentTurn(my), true], ...liveActions()]);
       return;
     }
     if (my !== session || !reply) return;
@@ -458,6 +499,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     P.ply += 1;
     P.lastPlayed = reply;
     setBoard(P.c, P.orient, reply, false);
+    saveBotGame();
     const end = gameEnd(P.c);
     if (end) { endSituation(end[0], end[1], true); return; }
     if (!P.free) {
@@ -487,7 +529,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     subtitle();
     msg(P.c.inCheck() ? 'Échec. À toi de jouer.' : 'À toi de jouer.');
     setBoard(P.c, P.orient, reply, true, onSituationMove);
-    if (P.free) actions(afterActions());
+    if (P.free) actions(liveActions());
   }
 
   function pgnOfGame() {
@@ -497,12 +539,13 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     g.loadPgn(c.pgn());
     const me = username() || 'Toi';
     const white = P.user === 'w';
-    const elo = String(getElo(P.id).r);
+    const elo = String(P.bot ? P.bot.elo : getElo(P.id).r);
+    const rival = P.bot ? P.bot.name : 'Maia';
     // Le résultat est celui de l'échiquier s'il y en a un (mat, nulle), sinon celui du verdict.
     const score = P.c.isCheckmate() ? (P.c.turn() === P.user ? 0 : 1) : P.c.isDraw() ? 0.5 : P.result;
     const won = score === 1 ? P.user : score === 0 ? (white ? 'b' : 'w') : null;
     const res = won === 'w' ? '1-0' : won === 'b' ? '0-1' : '1/2-1/2';
-    const headers = { White: white ? me : 'Maia', Black: white ? 'Maia' : me, WhiteElo: elo, BlackElo: elo, Result: res };
+    const headers = { White: white ? me : rival, Black: white ? rival : me, WhiteElo: elo, BlackElo: elo, Result: res };
     Object.entries(headers).forEach(([k, v]) => g.setHeader(k, v));
     return g.pgn();
   }
@@ -526,6 +569,19 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     P.done = true;
     session += 1;
     const id = P.id;
+    if (P.bot) {
+      // Fin d'une partie contre un bot : le bilan des parties est mis à jour, la partie en cours est effacée.
+      P.result = score;
+      const rec = botRecord(id);
+      rec[score === 1 ? 'w' : score === 0 ? 'l' : 'd'] += 1;
+      store.set(`bot-record-${id}`, JSON.stringify(rec));
+      store.set(`bot-game-${id}`, 'null');
+      head(P.bot.name, `${score === 1 ? 'Victoire' : score === 0 ? 'Défaite' : 'Nulle'} · ${recordText(id)}`);
+      msg(text, score === 1 ? 'good' : score === 0 ? 'bad' : '');
+      setBoard(P.c, P.orient, P.lastPlayed, false);
+      actions([['Revanche', () => startBot(id), true], ['Analyser cette partie', () => openGame(pgnOfGame())]]);
+      return;
+    }
     if (P.free) {
       // Fin d'une partie libre : rien n'est recompté.
       head(P.def.title, P.result === 1 ? 'Réussi' : 'À refaire');
@@ -566,9 +622,93 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     actions(afterActions());
   }
 
+  /* ---------- Affronte un bot ---------- */
+
+  const botRecord = (id) => ({ w: 0, d: 0, l: 0, ...(readJson(`bot-record-${id}`) || {}) });
+  const recordText = (id) => { const r = botRecord(id); return `Bilan : ${r.w} V · ${r.d} N · ${r.l} D`; };
+  const saveBotGame = () => { if (P.bot && !P.done) store.set(`bot-game-${P.id}`, JSON.stringify({ user: P.user, moves: P.c.history({ verbose: true }).map((m) => m.from + m.to + (m.promotion || '')) })); };
+  // Abandon : une partie à peine commencée est simplement annulée, sans compter comme une défaite.
+  const resign = () => ['Abandonner', () => {
+    if (P.c.history().length < 2) { store.set(`bot-game-${P.id}`, 'null'); startBot(P.id); } else endSituation(0, 'Tu as abandonné.', true);
+  }];
+  const liveActions = () => (P.bot ? [resign()] : P.free ? afterActions() : [abandon()]);
+
+  // Partie en cours enregistrée : rejouée coup par coup, ignorée si elle n'est plus lisible.
+  function savedBotGame(id) {
+    const s = readJson(`bot-game-${id}`);
+    if (!s || !Array.isArray(s.moves) || !s.moves.length || !['w', 'b'].includes(s.user)) return null;
+    try {
+      const c = new Chess();
+      s.moves.forEach((u) => c.move(parse(u)));
+      return c.isGameOver() ? null : { c, user: s.user, last: s.moves[s.moves.length - 1] };
+    } catch { return null; }
+  }
+
+  // color : 'w', 'b', 'resume' pour reprendre la partie enregistrée ; sans couleur, l'écran de choix s'affiche.
+  async function startBot(id, color) {
+    const my = freshSession();
+    const bot = BOTS.find((b) => b.id === id);
+    actions([]);
+    if (!bot) { head('Affronte un bot', ''); $('t-elo').textContent = ''; $('t-delta').textContent = ''; msg('Ce bot n’existe pas.', 'bad'); return; }
+    $('t-elo').textContent = bot.elo;
+    $('t-delta').textContent = '';
+    const saved = savedBotGame(id);
+    Object.assign(P, { def: { title: bot.name }, id, bot, c: new Chess(), user: 'w', my, ply: 0, done: true, startFen: START_FEN, thinking: false, orient: 'white', lastPlayed: null, retry: false, tries: 0, free: true, verdict: 0, streak: 0, result: null, maia: true });
+    if (!color) {
+      head(bot.name, recordText(id));
+      setBoard(saved ? saved.c : P.c, saved ? colorName(saved.user) : 'white', saved ? saved.last : null, false);
+      if (saved) {
+        msg('Une partie est en cours contre ce bot.');
+        actions([['Reprendre la partie', () => startBot(id, 'resume'), true], ['Nouvelle partie', () => { store.set(`bot-game-${id}`, 'null'); startBot(id); }]]);
+      } else {
+        msg('Choisis ta couleur.');
+        actions([['Blancs', () => startBot(id, 'w'), true], ['Noirs', () => startBot(id, 'b'), true], ['Au hasard', () => startBot(id, Math.random() < 0.5 ? 'w' : 'b')]]);
+      }
+      return;
+    }
+    const resumed = color === 'resume' && saved;
+    const c = resumed ? saved.c : new Chess();
+    const user = resumed ? saved.user : color === 'b' ? 'b' : 'w';
+    Object.assign(P, { c, user, ply: c.history().length, done: false, thinking: true, orient: colorName(user), lastPlayed: resumed ? saved.last : null });
+    setBoard(c, P.orient, P.lastPlayed, false);
+    head(bot.name, 'Préparation…');
+    msg(`Chargement de ${bot.name}…`);
+    let maiaError = null;
+    let waiting = true;
+    const human = ensureMaia((pct) => { if (my === session && waiting) msg(`Chargement de ${bot.name} : ${pct} %`); })
+      .then(() => true, (err) => { maiaError = err; return false; });
+    // Le bot joue avec Maia ; le moteur n'est que son remplaçant. Il suffit que l'un des deux soit là.
+    let engineError = null;
+    const [maiaReady] = await Promise.all([human, ensureEngine().catch((err) => { engineError = err; })]);
+    waiting = false;
+    if (my !== session) return;
+    if (!maiaReady && engineError) {
+      msg(`${bot.name} n’a pas pu être chargé (${reason(maiaError)}). Vérifie ta connexion, puis réessaie.`, 'bad');
+      actions([['Réessayer', () => startBot(id, resumed ? 'resume' : user), true]]);
+      return;
+    }
+    P.maia = maiaReady;
+    subtitle();
+    const note = P.maia ? '' : ` Le modèle de ${bot.name} n’a pas pu être chargé (${reason(maiaError)}) : il joue avec le moteur seul, sans son style.`;
+    if (c.turn() === user) {
+      P.thinking = false;
+      msg(`${resumed ? 'Partie reprise. ' : ''}À toi de jouer.${note}`);
+      setBoard(c, P.orient, P.lastPlayed, true, onSituationMove);
+      actions(liveActions());
+    } else {
+      if (note) msg(note.trim());
+      await opponentTurn(my);
+    }
+  }
+
   /* ---------- Accueil des exercices ---------- */
 
   function renderHub() {
+    const bots = $('bots-list');
+    if (bots) bots.replaceChildren(...BOTS.map((b) => h('a', { class: 'tile', href: `#bot-${b.id}` },
+      h('span', { class: 'tile-ic', 'aria-hidden': 'true' }, b.icon),
+      h('span', { class: 'tile-main' }, h('strong', {}, b.name), h('small', {}, b.blurb)),
+      h('span', { class: 'elo-chip' }, String(b.elo)))));
     const box = $('hub-sits');
     if (!box) return;
     $('hub-puzzle-elo').textContent = getElo('puzzle').r;
@@ -580,8 +720,8 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
 
   return {
     renderHub,
-    titleOf: (id) => (SITUATIONS.find((s) => s.id === id) || {}).title || 'Mise en situation',
-    open(id) { if (id === 'puzzle') nextPuzzle(); else startSituation(id); },
+    titleOf: (id) => (id.startsWith('bot:') ? (BOTS.find((b) => b.id === id.slice(4)) || {}).name || 'Affronte un bot' : (SITUATIONS.find((s) => s.id === id) || {}).title || 'Mise en situation'),
+    open(id) { if (id === 'puzzle') nextPuzzle(); else if (id.startsWith('bot:')) startBot(id.slice(4)); else startSituation(id); },
     close() {
       session += 1;
       if (cancelPromo) cancelPromo();
