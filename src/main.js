@@ -993,8 +993,10 @@ async function prepareNext(v) {
       // L'adversaire joue comme à son Elo ; ton côté choisit plus souvent le coup principal.
       const temperature = mine ? MAIA_TOP_TEMPERATURE : 1;
       const other = mine ? v.oppElo : (v.myElo || v.myRating);
-      uci = await maiaModule.move(c.fen(), elo, other, temperature);
-    } else {
+      // Si Maia ne répond plus en cours de route, le moteur prend le relais comme lorsqu'elle n'a pas pu se charger.
+      try { uci = await maiaModule.move(c.fen(), elo, other, temperature); } catch { v.maiaFailed = true; }
+    }
+    if (v.maiaFailed) {
       const list = await engine.candidates(game.fens[0], ucis, CANDIDATE_DEPTH, CANDIDATE_COUNT);
       if (list.length) uci = pickHuman(list, elo);
     }

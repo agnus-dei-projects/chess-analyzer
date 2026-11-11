@@ -9,8 +9,9 @@ self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
 });
 
-// Le cache Maia ne garde que les gros fichiers figés (modèle, moteur ONNX) ; le code suit les versions.
-const BIG = /\/maia\/(m\.onnx|ort-wasm[^/]*)$/;
+// Le cache Maia ne garde que les deux gros fichiers figés (modèle, moteur ONNX) ; le code, y compris
+// le lanceur du moteur ONNX, suit les versions. La page vérifie la taille de ces fichiers avant de s'en servir.
+const BIG = /\/maia\/(m\.onnx|ort-wasm[^/]*\.wasm)$/;
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys()
@@ -36,7 +37,8 @@ self.addEventListener('fetch', (e) => {
   if (url.pathname.includes('/maia/')) {
     const name = BIG.test(url.pathname) ? MAIA : CACHE;
     e.respondWith(caches.open(name).then((c) => c.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
-      if (res.ok) c.put(e.request, res.clone());
+      // Une réponse partielle (reprise d'un téléchargement) ne se met pas en cache : la page range le fichier entier elle-même.
+      if (res.status === 200) c.put(e.request, res.clone()).catch(() => {});
       return res;
     }))));
     return;

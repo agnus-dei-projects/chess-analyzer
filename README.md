@@ -31,6 +31,18 @@ Problèmes : [base de problèmes Lichess](https://database.lichess.org/) (CC0), 
 - `tests/run.mjs` rejoue chaque position signalée (`tests/cases.json`) comme dans l'appli et vérifie ce que le commentaire doit dire et ne doit plus dire.
 - `tests/corpus.mjs` recalcule les commentaires de 16 parties analysées (`tests/corpus/states.json`), vérifie des règles valables pour tout commentaire, et compare chaque texte à la version validée (`tests/corpus/snapshot.json`). Tout changement est listé dans `tests/corpus/diff.txt` pour relecture ; `node tests/corpus.mjs --accept` l'enregistre ensuite.
 
+## Tests du mode entraînement
+
+- `tests/training.mjs` (compris dans `npm test`) contrôle sans navigateur les positions des mises en situation, leurs seuils, et la lecture des problèmes (deux sources, données abîmées, pannes).
+- `node tests/navigateur/run.mjs` joue les parcours dans Chrome avec des pannes simulées : téléchargement coupé ou figé, fichier du moteur manquant, Maia ou le moteur qui ne répondent plus en pleine partie, cache abîmé, sources de problèmes en panne. Il demande Chrome et Playwright, qui ne sont pas installés par le projet (voir `tests/navigateur/outils.mjs`).
+
+Règles du mode entraînement que ces tests protègent :
+
+- Aucune attente sans limite : chaque chargement et chaque calcul a un délai, puis un second essai ou un message avec un bouton.
+- Le modèle Maia (37 Mo avec son moteur de calcul) se télécharge avec reprise et se range dans le cache ; s'il reste indisponible, l'adversaire joue avec le moteur bridé à son Elo, et l'écran le dit.
+- Un verdict donné par l'évaluation doit tenir deux tours de suite ; après le verdict, la partie peut se poursuivre librement jusqu'au mat.
+- Après trois essais manqués sur une même position, on peut en changer.
+
 ## Signalements
 
 Le bouton « Signaler ce commentaire » garde le signalement sur l'appareil (réglages, « Signalements »). « Tout copier » les exporte en un bloc. Avec un jeton GitHub limité aux tickets de ce dépôt, saisi dans les réglages et gardé sur l'appareil, ils sont envoyés comme tickets « [Signalement] ».

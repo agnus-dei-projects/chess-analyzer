@@ -5,6 +5,29 @@ const ROWS = 'https://datasets-server.huggingface.co/rows?dataset=Lichess/chess-
 const TOTAL = 6150000;
 const POOL_MAX = 500;
 const SEEN_MAX = 30000;
+const FETCH_MS = 8000; // une connexion qui traîne passe à la source suivante au lieu d'attendre sans fin
+
+async function getJson(url, headers) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), FETCH_MS);
+  try {
+    const res = await fetch(url, { headers, signal: ctl.signal });
+    if (!res.ok) throw new Error(`réponse ${res.status}`);
+    return await res.json();
+  } finally { clearTimeout(timer); }
+}
+
+const step = (c, u) => c.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] });
+
+// Un problème n'est proposé que si sa position se charge et que toute sa solution est jouable.
+export function validPuzzle(p) {
+  try {
+    if (!p || !Array.isArray(p.solution) || !p.solution.length || !Number.isFinite(p.rating)) return false;
+    const c = new Chess(p.start);
+    p.solution.forEach((u) => step(c, u));
+    return true;
+  } catch { return false; }
+}
 
 export const expected = (r, opp) => 1 / (1 + 10 ** ((opp - r) / 400));
 
@@ -17,12 +40,24 @@ export function updateElo(rec, opp, score) {
 export function fromRow(row) {
   const moves = String(row.Moves).trim().split(/\s+/);
   const c = new Chess(row.FEN);
-  c.move({ from: moves[0].slice(0, 2), to: moves[0].slice(2, 4), promotion: moves[0][4] });
-  return { id: row.PuzzleId, start: c.fen(), lastMove: moves[0], solution: moves.slice(1), rating: row.Rating, themes: row.Themes || [] };
+  step(c, moves[0]);
+  const themes = Array.isArray(row.Themes) ? row.Themes : String(row.Themes || '').split(/\s+/).filter(Boolean);
+  return { id: row.PuzzleId, start: c.fen(), lastMove: moves[0], solution: moves.slice(1), rating: row.Rating, themes };
 }
 
-function fromLichess(j) {
-  return { id: j.puzzle.id, start: j.puzzle.fen, lastMove: j.puzzle.lastMove, solution: j.puzzle.solution, rating: j.puzzle.rating, themes: j.puzzle.themes || [] };
+// Lichess donne la position de départ soit directement, soit par la partie rejouée jusqu'au coup du problème.
+export function fromLichess(j) {
+  let start = j.puzzle.fen;
+  let { lastMove } = j.puzzle;
+  if (!start || !lastMove) {
+    const c = new Chess();
+    c.loadPgn(j.game.pgn);
+    const all = c.history({ verbose: true });
+    const last = all[j.puzzle.initialPly] || all[all.length - 1];
+    start = last.after;
+    lastMove = last.from + last.to + (last.promotion || '');
+  }
+  return { id: j.puzzle.id, start, lastMove, solution: j.puzzle.solution, rating: j.puzzle.rating, themes: j.puzzle.themes || [] };
 }
 
 export function createPool(store) {
@@ -34,26 +69,28 @@ export function createPool(store) {
 
   async function fetchRows() {
     const offset = Math.floor(Math.random() * (TOTAL - 100));
-    const res = await fetch(`${ROWS}&offset=${offset}&length=100`);
-    if (!res.ok) throw new Error(`rows ${res.status}`);
-    const j = await res.json();
-    return j.rows.map((x) => x.row).filter((r) => r.Popularity >= 50 && r.NbPlays >= 30 && r.RatingDeviation <= 110).map(fromRow);
+    const j = await getJson(`${ROWS}&offset=${offset}&length=100`);
+    const rows = j.rows.map((x) => x.row).filter((r) => r.Popularity >= 50 && r.NbPlays >= 30 && r.RatingDeviation <= 110);
+    // Une ligne illisible est ignorée : elle ne fait pas échouer tout le lot.
+    return rows.map((r) => { try { return fromRow(r); } catch { return null; } }).filter(validPuzzle);
   }
   async function fetchLichess(target) {
     const diff = target < 1050 ? 'easiest' : target < 1350 ? 'easier' : target < 1650 ? 'normal' : target < 1950 ? 'harder' : 'hardest';
-    const res = await fetch(`https://lichess.org/api/puzzle/next?difficulty=${diff}`, { headers: { Accept: 'application/json' } });
-    if (!res.ok) throw new Error(`lichess ${res.status}`);
-    return [fromLichess(await res.json())];
+    const p = fromLichess(await getJson(`https://lichess.org/api/puzzle/next?difficulty=${diff}`, { Accept: 'application/json' }));
+    if (!validPuzzle(p)) throw new Error('problème illisible');
+    return [p];
   }
   function refill(target) {
     if (!filling) {
       filling = (async () => {
         let got = [];
-        try { got = await fetchRows(); } catch { got = await fetchLichess(target); }
+        let source = 'base';
+        try { got = await fetchRows(); } catch { source = 'secours'; got = await fetchLichess(target); }
         const known = new Set(pool.map((p) => p.id));
         got.filter((p) => !seen.has(p.id) && !known.has(p.id)).forEach((p) => pool.push(p));
         if (pool.length > POOL_MAX) pool = pool.slice(-POOL_MAX);
         save();
+        return source;
       })().finally(() => { filling = null; });
     }
     return filling;
@@ -64,12 +101,22 @@ export function createPool(store) {
     async next(rating) {
       // Légère variation autour de ton Elo, pour alterner difficulté et réussite.
       const target = rating + (Math.random() * 200 - 90);
-      for (let i = 0; i < 6 && near(target, 120).length < 1; i += 1) {
-        try { await refill(target); } catch (err) { if (!pool.length) throw err; break; }
+      // Un problème gardé en réserve mais illisible (données abîmées) est écarté au moment du choix ;
+      // si la réserve se vide ainsi, on la remplit de nouveau avant de renoncer.
+      let pick = null;
+      for (let round = 0; round < 3 && !pick; round += 1) {
+        // La base principale en panne, la source de secours ne donne qu'un problème à la fois : on s'en contente.
+        let backup = false;
+        for (let i = 0; i < 6 && !backup && near(target, 120).length < 1; i += 1) {
+          try { backup = (await refill(target)) === 'secours'; } catch (err) { if (!pool.length) throw err; break; }
+        }
+        while (pool.length && !pick) {
+          const best = pool.slice().sort((a, b) => Math.abs(a.rating - target) - Math.abs(b.rating - target))[0];
+          pool = pool.filter((p) => p !== best);
+          if (validPuzzle(best)) pick = best;
+        }
       }
-      if (!pool.length) throw new Error('vide');
-      const pick = pool.slice().sort((a, b) => Math.abs(a.rating - target) - Math.abs(b.rating - target))[0];
-      pool = pool.filter((p) => p !== pick);
+      if (!pick) { save(); throw new Error('vide'); }
       seen.add(pick.id);
       if (seen.size > SEEN_MAX) seen = new Set([...seen].slice(-SEEN_MAX));
       store.set('puzzle-seen', JSON.stringify([...seen]));

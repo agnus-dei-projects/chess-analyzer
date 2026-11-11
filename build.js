@@ -29,7 +29,10 @@ for (const [pkg, file] of [['young-serif', 'young-serif-400'], ['instrument-sans
 }
 // Maia-3 : fichiers à part, téléchargés seulement quand on rejoue une partie.
 fs.mkdirSync('dist/app/maia', { recursive: true });
-esbuild.buildSync({ entryPoints: ['src/maia.js'], bundle: true, minify: true, format: 'esm', outfile: 'dist/app/maia/maia.mjs', target: 'es2020' });
+const size = (p) => String(fs.statSync(p).size);
+const MAIA_MODEL = 'node_modules/maia3-js/models/maia3_5m.onnx';
+const MAIA_WASM = 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm';
+esbuild.buildSync({ entryPoints: ['src/maia.js'], bundle: true, minify: true, format: 'esm', outfile: 'dist/app/maia/maia.mjs', target: 'es2020', define: { __MAIA_MODEL_BYTES__: size(MAIA_MODEL), __MAIA_WASM_BYTES__: size(MAIA_WASM) } });
 esbuild.buildSync({ entryPoints: ['src/maia-worker.js'], bundle: true, minify: true, format: 'esm', outfile: 'dist/app/maia/maia-worker.mjs', external: ['onnxruntime-node'], alias: { 'onnxruntime-web': 'onnxruntime-web/wasm' }, target: 'es2020' });
 fs.copyFileSync('node_modules/maia3-js/models/maia3_5m.onnx', 'dist/app/maia/m.onnx');
 for (const f of ['ort-wasm-simd-threaded.wasm', 'ort-wasm-simd-threaded.mjs']) fs.copyFileSync('node_modules/onnxruntime-web/dist/' + f, 'dist/app/maia/' + f);

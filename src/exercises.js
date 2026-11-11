@@ -1,8 +1,9 @@
 // Exercices : problèmes notés et mises en situation contre Maia.
 import { Chess } from 'chess.js';
 import { Chessground } from 'chessground';
-import { createPool, updateElo } from './puzzles.js';
-import { toWhiteScore } from './analysis.js';
+import { createPool, updateElo, validPuzzle } from './puzzles.js';
+import { pickHuman, toWhiteScore } from './analysis.js';
+import { within } from './within.js';
 import { explainWrongMove } from './explain.js';
 import POSITIONS from './situations.json';
 
@@ -17,6 +18,22 @@ export const SITUATIONS = [
 const THEMES = { mate: 'Mat', mateIn1: 'Mat en 1', mateIn2: 'Mat en 2', mateIn3: 'Mat en 3', mateIn4: 'Mat en 4', fork: 'Fourchette', pin: 'Clouage', skewer: 'Enfilade', sacrifice: 'Sacrifice', discoveredAttack: 'Attaque à la découverte', deflection: 'Déviation', attraction: 'Attraction', hangingPiece: 'Pièce en prise', trappedPiece: 'Pièce piégée', backRankMate: 'Mat du couloir', promotion: 'Promotion', endgame: 'Finale', opening: 'Ouverture', middlegame: 'Milieu de partie', kingsideAttack: 'Attaque sur le roque', defensiveMove: 'Coup défensif', quietMove: 'Coup tranquille' };
 
 const START = 800;
+// Au-delà de ce délai sans réponse, le moteur est relancé au lieu de laisser l'exercice figé.
+const EVAL_MS = 15000;
+// Adversaire de secours quand Maia est indisponible : un coup « humain » tiré parmi les meilleurs du moteur.
+const CANDIDATE_DEPTH = 10;
+const CANDIDATE_COUNT = 8;
+// Un verdict donné par l'évaluation doit tenir deux tours de suite : un seul coup ne décide pas de l'essai.
+const CONFIRM_TURNS = 2;
+// Après ce nombre d'essais manqués sur une même position, on peut en changer.
+const SKIP_AFTER = 3;
+// Cause d'une panne, en clair : elle s'affiche à l'écran pour qu'une capture suffise à comprendre.
+const reason = (err) => {
+  const t = String((err && err.message) || err || 'erreur inconnue').replace(/\.$/, '');
+  const http = t.match(/\b(?:HTTP |\()(\d{3})\b/);
+  if (/importScripts|Failed to fetch|NetworkError|Load failed|HTTP \d{3}/i.test(t)) return `fichier inaccessible${http ? `, erreur ${http[1]}` : ''}`;
+  return t.length > 90 ? `${t.slice(0, 90)}…` : t;
+};
 const SK = (id) => `elo-${id}`;
 const parse = (u) => ({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] });
 const pause = (ms) => new Promise((r) => { setTimeout(r, ms); });
@@ -27,6 +44,7 @@ function destsOf(c) {
   return d;
 }
 const colorName = (t) => (t === 'w' ? 'white' : 'black');
+const themesOf = (p) => (Array.isArray(p.themes) ? p.themes : String(p.themes || '').split(/\s+/).filter(Boolean));
 
 export function createTrainer({ h, store, Engine, ensureMaia, openGame, username, display, say, hush, fx }) {
   const $ = (id) => document.getElementById(id);
@@ -43,7 +61,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
   let engine = null;
   let stats = { streak: 0 };
   const P = {}; // état de l'exercice courant
-  if (__AUDIT__) { window.__P = P; window.__fx = fx; window.__redraw = () => setBoard(P.c, P.orient, null, true, onSituationMove); }
+  if (__AUDIT__) { window.__P = P; window.__fx = fx; window.__redraw = () => setBoard(P.c, P.orient, null, true, onSituationMove); window.__move = (o, d) => onSituationMove(o, d); window.__pmove = (o, d) => onPuzzleMove(o, d); }
 
   const msg = (text, tone = '') => { const m = $('t-msg'); m.textContent = text; m.dataset.tone = tone; };
   const actions = (list) => {
@@ -81,15 +99,38 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
   /* ---------- Problèmes ---------- */
 
   let starting = null;
+  // Un moteur qui n'a pas démarré est oublié : l'essai suivant en crée un neuf au lieu de buter sur le même échec.
   async function ensureEngine() {
     if (!engine) {
       const e = new Engine();
       engine = e;
-      starting = e.init();
+      starting = e.init().catch((err) => { if (engine === e) engine = null; throw err; });
+      starting.catch(() => {});
     }
     await starting;
     return engine;
   }
+  const dropEngine = () => { if (engine) { engine.stop(); engine = null; } };
+
+  // Calcul du moteur avec un second essai sur un moteur neuf : une panne passagère ne fige pas l'exercice.
+  let computing = 0;
+  async function compute(my, run) {
+    for (let attempt = 0; ; attempt += 1) {
+      if (my !== session) throw new Error('écran quitté');
+      computing += 1;
+      try {
+        const e = await ensureEngine();
+        if (my !== session || !e) throw new Error('écran quitté');
+        return await within(run(e), EVAL_MS, 'le moteur ne répond plus');
+      } catch (err) {
+        if (my !== session || attempt) throw err;
+        dropEngine();
+      } finally { computing -= 1; }
+    }
+  }
+  // Un nouvel exercice ne partage pas le moteur avec un calcul encore en cours pour le précédent :
+  // les deux réponses se mélangeraient.
+  const freshSession = () => { if (computing) dropEngine(); session += 1; return session; };
 
   function presentPuzzle() {
     P.c = new Chess(P.p.start);
@@ -106,12 +147,14 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
   const savePuzzle = () => store.set('puzzle-current', JSON.stringify({ p: P.p, failed: P.failed }));
 
   async function nextPuzzle() {
-    const my = ++session;
+    const my = freshSession();
     actions([]);
     head('Problèmes', 'Chargement…');
     showElo('puzzle');
     board().set({ movable: { color: undefined } });
-    const saved = readJson('puzzle-current');
+    let saved = readJson('puzzle-current');
+    // Un problème enregistré illisible (données abîmées) est abandonné plutôt que de bloquer l'écran.
+    if (saved && !validPuzzle(saved.p)) { saved = null; store.set('puzzle-current', 'null'); }
     let p = saved && saved.p;
     if (!p) {
       msg('Recherche d’un problème à ton niveau…');
@@ -145,7 +188,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
   function finishPuzzle(text, tone) {
     P.done = true;
     store.set('puzzle-current', 'null');
-    const themes = P.p.themes.map((t) => THEMES[t]).filter(Boolean).slice(0, 3).join(' · ');
+    const themes = themesOf(P.p).map((t) => THEMES[t]).filter(Boolean).slice(0, 3).join(' · ');
     head('Problèmes', `Problème ${P.p.rating}${themes ? ` · ${themes}` : ''}`);
     msg(text, tone);
     setBoard(P.c, P.orient, P.lastPlayed || P.p.lastMove, false);
@@ -170,12 +213,11 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     let ex = null;
     if (!trial.isGameOver()) {
       try {
-        await ensureEngine();
-        const r = await engine.evaluate(trial.fen(), 12);
+        const r = await compute(my, (e) => e.evaluate(trial.fen(), 12));
         if (my !== session) return;
         const mover = P.c.turn();
         ex = explainWrongMove({
-          fenBefore: P.c.fen(), fenAfter: trial.fen(), themes: P.p.themes,
+          fenBefore: P.c.fen(), fenAfter: trial.fen(), themes: themesOf(P.p),
           ply: { uci, from: uci.slice(0, 2), to: uci.slice(2, 4), color: mover },
           after: { score: toWhiteScore(r.score, trial.turn() === 'w'), pv: r.pv },
         });
@@ -246,53 +288,80 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
 
   /* ---------- Mises en situation ---------- */
 
-  async function evalFor(fen, user) {
-    const r = await engine.evaluate(fen, 11);
+  // Évaluation de la position du point de vue du joueur, en centipions.
+  async function evalFor(fen, user, my) {
+    const r = await compute(my, (e) => e.evaluate(fen, 11));
     const w = toWhiteScore(r.score, fen.split(' ')[1] === 'w');
     const cp = w.type === 'cp' ? w.value : (w.value > 0 ? 20000 : -20000);
     return user === 'w' ? cp : -cp;
   }
 
-  async function startSituation(id) {
-    const my = ++session;
+  const saveCurrent = (id, v) => store.set(`current-${id}`, JSON.stringify(v));
+
+  async function startSituation(id, skip) {
+    const my = freshSession();
     const def = SITUATIONS.find((s) => s.id === id);
-    const list = POSITIONS[id] || [];
+    const list = (def && POSITIONS[id]) || [];
     actions([]);
+    if (!def) { head('Mise en situation', ''); msg('Cette mise en situation n’existe pas.', 'bad'); return; }
     showElo(id);
     head(def.title, 'Préparation…');
     if (!list.length) { msg('Aucune position disponible pour le moment.', 'bad'); return; }
     // Une position reste à résoudre tant qu'elle n'est pas réussie.
-    let current = readJson(`current-${id}`);
+    let current = skip ? null : readJson(`current-${id}`);
     if (!current || !list.some((p) => p.fen === current.fen)) {
       const recent = readJson(`recent-${id}`) || [];
       const fresh = list.filter((p) => !recent.includes(p.fen));
       const chosen = (fresh.length ? fresh : list)[Math.floor(Math.random() * (fresh.length || list.length))];
       store.set(`recent-${id}`, JSON.stringify([...recent, chosen.fen].slice(-Math.floor(list.length * 0.8))));
-      current = { fen: chosen.fen, rated: false };
-      store.set(`current-${id}`, JSON.stringify(current));
+      current = { fen: chosen.fen, rated: false, tries: 0 };
+      saveCurrent(id, current);
     }
     const item = list.find((p) => p.fen === current.fen);
     const c = new Chess(item.fen);
     const user = c.turn();
-    Object.assign(P, { def, id, c, user, my, ply: 0, done: false, startFen: item.fen, thinking: true, orient: colorName(user), lastPlayed: null, retry: current.rated });
+    Object.assign(P, {
+      def, id, c, user, my, ply: 0, done: false, startFen: item.fen, thinking: true, orient: colorName(user), lastPlayed: null,
+      retry: !!current.rated, tries: current.tries || 0, free: false, verdict: 0, streak: 0, result: null, maia: true,
+    });
     setBoard(c, P.orient, null, false);
+    msg('Chargement de l’adversaire…');
+    // Maia et le moteur se chargent en même temps. Seul le moteur est indispensable :
+    // si Maia ne vient pas, l'adversaire joue avec le moteur, bridé à son Elo.
+    let maiaError = null;
+    let waiting = true;
+    const human = ensureMaia((pct) => { if (my === session && waiting) msg(`Chargement de l’adversaire : ${pct} %`); })
+      .then(() => true, (err) => { maiaError = err; return false; });
     try {
-      msg('Chargement de l’adversaire…');
-      await ensureMaia((pct) => { if (my === session) msg(`Chargement de l’adversaire : ${pct} %`); });
       await ensureEngine();
-    } catch {
-      if (my === session) { msg('Impossible de charger l’adversaire. Vérifie ta connexion, puis réessaie.', 'bad'); actions([['Réessayer', () => startSituation(id), true]]); }
+    } catch (err) {
+      waiting = false;
+      if (my === session) {
+        msg(`Le moteur d’échecs n’a pas pu démarrer (${reason(err)}). Vérifie ta connexion, puis réessaie.`, 'bad');
+        actions([['Réessayer', () => startSituation(id), true]]);
+      }
       return;
     }
+    const maiaReady = await human;
+    waiting = false;
     if (my !== session) return;
+    P.maia = maiaReady;
     P.thinking = false;
     subtitle();
-    msg(`${current.rated ? 'Nouvel essai. ' : ''}${item.title ? `${item.title}. ` : ''}${def.goal}`);
+    const note = P.maia ? '' : ` Adversaire de secours : le modèle humain n’a pas pu être chargé (${reason(maiaError)}).`;
+    msg(`${current.rated ? 'Nouvel essai. ' : ''}${item.title ? `${item.title}. ` : ''}${def.goal}${note}`);
     setBoard(c, P.orient, null, true, onSituationMove);
-    actions([['Abandonner cet essai', () => endSituation(0, 'Essai abandonné.')]]);
+    actions([abandon()]);
   }
 
-  const subtitle = () => { const left = Math.max(0, Math.ceil((P.def.cap - P.ply) / 2)); head(P.def.title, `Adversaire ${getElo(P.id).r} · ${left} coups restants · ${P.user === 'w' ? 'Blancs' : 'Noirs'}`); };
+  const abandon = () => ['Abandonner cet essai', () => endSituation(0, 'Essai abandonné.', false)];
+  const sideName = () => (P.user === 'w' ? 'Blancs' : 'Noirs');
+  const subtitle = () => {
+    const rival = `Adversaire ${getElo(P.id).r}${P.maia ? '' : ' (moteur)'}`;
+    if (P.free) { head(P.def.title, `Partie libre · ${rival} · ${sideName()}`); return; }
+    const left = Math.max(0, Math.ceil((P.def.cap - P.ply) / 2));
+    head(P.def.title, `${rival} · ${left} coup${left > 1 ? 's' : ''} restant${left > 1 ? 's' : ''} · ${sideName()}`);
+  };
 
   function gameEnd(c) {
     if (c.isCheckmate()) return c.turn() === P.user ? [0, 'Tu es mat.'] : [1, 'Échec et mat, bravo.'];
@@ -317,6 +386,32 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     });
   }
 
+  const legalIn = (fen, u) => { try { return !!(u && new Chess(fen).move(parse(u))); } catch { return false; } };
+
+  // Coup de l'adversaire : Maia à l'Elo du thème. Si elle ne répond plus, elle est rechargée une fois,
+  // puis le moteur prend le relais avec un coup « humain » tiré parmi ses meilleurs.
+  async function opponentMove(my) {
+    const fen = P.c.fen();
+    const elo = getElo(P.id).r;
+    for (let attempt = 0; P.maia && attempt < 2; attempt += 1) {
+      try {
+        const m = await ensureMaia();
+        if (my !== session) return null;
+        const u = await m.move(fen, elo, elo, 1);
+        if (my !== session) return null;
+        if (legalIn(fen, u)) return u;
+      } catch { /* second essai, puis moteur */ }
+      if (my !== session) return null;
+    }
+    P.maia = false;
+    const list = (await compute(my, (e) => e.candidates(fen, [], CANDIDATE_DEPTH, CANDIDATE_COUNT))).filter((x) => legalIn(fen, x.uci));
+    if (my !== session) return null;
+    if (list.length) return pickHuman(list, elo);
+    const best = (await compute(my, (e) => e.evaluate(fen, 8))).best;
+    if (!legalIn(fen, best)) throw new Error('aucun coup trouvé');
+    return best;
+  }
+
   async function onSituationMove(orig, dest) {
     if (P.done || P.thinking) return;
     const my = P.my;
@@ -329,45 +424,73 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
       P.thinking = false;
       if (!promo) { setBoard(P.c, P.orient, P.lastPlayed, true, onSituationMove); return; }
     }
-    moveFx(P.c.move({ from: orig, to: dest, promotion: promo }), P.c, false);
+    let played;
+    try { played = P.c.move({ from: orig, to: dest, promotion: promo }); } catch { played = null; }
+    // Coup refusé (ne devrait pas arriver) : l'échiquier est remis d'aplomb et on rejoue.
+    if (!played) { setBoard(P.c, P.orient, P.lastPlayed, true, onSituationMove); return; }
+    moveFx(played, P.c, false);
     P.ply += 1;
     P.lastPlayed = orig + dest + (promo || '');
     P.thinking = true;
     setBoard(P.c, P.orient, P.lastPlayed, false);
-    let end = gameEnd(P.c);
-    if (end) { endSituation(end[0], end[1]); return; }
+    const end = gameEnd(P.c);
+    if (end) { endSituation(end[0], end[1], true); return; }
+    await opponentTurn(my);
+  }
+
+  async function opponentTurn(my) {
+    if (my !== session || P.done) return;
+    P.thinking = true;
     msg('L’adversaire réfléchit…');
+    actions(P.free ? afterActions() : [abandon()]);
     await pause(250);
-    const elo = getElo(P.id).r;
-    let reply;
-    try { reply = await (await ensureMaia(() => {})).move(P.c.fen(), elo, elo, 1); } catch { reply = null; }
     if (my !== session) return;
-    if (!reply) { try { reply = (await engine.evaluate(P.c.fen(), 8)).best; } catch { return; } if (my !== session) return; }
+    let reply;
+    try { reply = await opponentMove(my); } catch (err) {
+      // Ni Maia ni le moteur ne répondent : la partie est gardée telle quelle, on peut relancer l'adversaire.
+      if (my !== session) return;
+      msg(`L’adversaire ne répond plus (${reason(err)}). La partie est conservée.`, 'bad');
+      actions([['Relancer l’adversaire', () => opponentTurn(my), true], ...(P.free ? afterActions() : [abandon()])]);
+      return;
+    }
+    if (my !== session || !reply) return;
     moveFx(P.c.move(parse(reply)), P.c);
     P.ply += 1;
     P.lastPlayed = reply;
-    end = gameEnd(P.c);
-    if (end) { setBoard(P.c, P.orient, reply, false); endSituation(end[0], end[1]); return; }
     setBoard(P.c, P.orient, reply, false);
-    let ev;
-    try { ev = await evalFor(P.c.fen(), P.user); } catch { return; }
-    if (my !== session) return;
-    const d = P.def;
-    if (ev >= d.winAt) { endSituation(1, 'Position gagnante atteinte, objectif rempli.'); return; }
-    if (ev <= d.lossAt) { endSituation(0, 'La position est perdue.'); return; }
-    if (P.ply >= d.cap) {
-      if (ev >= d.capWin) endSituation(1, 'Objectif rempli à la fin du temps imparti.');
-      else if (ev >= d.capDraw) endSituation(0.5, 'Résultat moyen : tu n’as pas atteint l’objectif, mais tu tiens encore.');
-      else endSituation(0, 'Objectif manqué.');
-      return;
+    const end = gameEnd(P.c);
+    if (end) { endSituation(end[0], end[1], true); return; }
+    if (!P.free) {
+      // Sans évaluation (moteur en panne), la partie continue : le verdict attendra le tour suivant.
+      let ev = null;
+      try { ev = await evalFor(P.c.fen(), P.user, my); } catch { ev = null; }
+      if (my !== session) return;
+      const d = P.def;
+      if (ev != null) {
+        const side = ev >= d.winAt ? 1 : ev <= d.lossAt ? -1 : 0;
+        P.streak = side && side === P.verdict ? P.streak + 1 : side ? 1 : 0;
+        P.verdict = side;
+        if (P.streak >= CONFIRM_TURNS) {
+          if (side > 0) endSituation(1, 'Position gagnante confirmée, objectif rempli.');
+          else endSituation(0, 'La position est perdue.');
+          return;
+        }
+        if (P.ply >= d.cap) {
+          if (ev >= d.capWin) endSituation(1, 'Objectif rempli à la fin du temps imparti.');
+          else if (ev >= d.capDraw) endSituation(0.5, 'Résultat moyen : tu n’as pas atteint l’objectif, mais tu tiens encore.');
+          else endSituation(0, 'Objectif manqué.');
+          return;
+        }
+      }
     }
     P.thinking = false;
     subtitle();
     msg(P.c.inCheck() ? 'Échec. À toi de jouer.' : 'À toi de jouer.');
     setBoard(P.c, P.orient, reply, true, onSituationMove);
+    if (P.free) actions(afterActions());
   }
 
-  function pgnOfGame(score) {
+  function pgnOfGame() {
     const g = new Chess(P.startFen);
     const c = new Chess(P.startFen);
     P.c.history({ verbose: true }).forEach((m) => c.move({ from: m.from, to: m.to, promotion: m.promotion }));
@@ -375,6 +498,8 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     const me = username() || 'Toi';
     const white = P.user === 'w';
     const elo = String(getElo(P.id).r);
+    // Le résultat est celui de l'échiquier s'il y en a un (mat, nulle), sinon celui du verdict.
+    const score = P.c.isCheckmate() ? (P.c.turn() === P.user ? 0 : 1) : P.c.isDraw() ? 0.5 : P.result;
     const won = score === 1 ? P.user : score === 0 ? (white ? 'b' : 'w') : null;
     const res = won === 'w' ? '1-0' : won === 'b' ? '0-1' : '1/2-1/2';
     const headers = { White: white ? me : 'Maia', Black: white ? 'Maia' : me, WhiteElo: elo, BlackElo: elo, Result: res };
@@ -382,11 +507,35 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     return g.pgn();
   }
 
-  function endSituation(score, text) {
+  // Boutons une fois le résultat compté : suite ou nouvel essai, analyse, et changement de position après plusieurs échecs.
+  function afterActions(canContinue) {
+    const id = P.id;
+    const solved = P.result === 1;
+    const hasMoves = P.c.history().length > 0;
+    return [
+      solved ? ['Situation suivante', () => startSituation(id), true] : ['Réessayer', () => startSituation(id), true],
+      ...(canContinue ? [['Continuer la partie', continueFree]] : []),
+      ...(hasMoves ? [['Analyser cette partie', () => openGame(pgnOfGame())]] : []),
+      ...(!solved && P.tries >= SKIP_AFTER ? [['Passer cette position', () => startSituation(id, true)]] : []),
+    ];
+  }
+
+  // over : la partie est réellement finie (mat, nulle). Sinon on peut la poursuivre librement, résultat déjà compté.
+  function endSituation(score, text, over) {
     if (P.done) return;
     P.done = true;
     session += 1;
     const id = P.id;
+    if (P.free) {
+      // Fin d'une partie libre : rien n'est recompté.
+      head(P.def.title, P.result === 1 ? 'Réussi' : 'À refaire');
+      msg(`${text} Le résultat de l’essai était déjà compté.`, '');
+      setBoard(P.c, P.orient, P.lastPlayed, false);
+      actions(afterActions());
+      return;
+    }
+    P.result = score;
+    const solved = score === 1;
     // Seul le premier essai compte pour l'Elo, comme pour les problèmes.
     if (P.retry) {
       showElo(id);
@@ -395,18 +544,26 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
       const r = updateElo(e, e.r, score);
       setElo(id, { r: r.r, n: r.n });
       showElo(id, r.delta);
-      store.set(`current-${id}`, JSON.stringify({ fen: P.startFen, rated: true }));
     }
-    const solved = score === 1;
     if (solved) store.set(`current-${id}`, 'null');
+    else { P.tries += 1; saveCurrent(id, { fen: P.startFen, rated: true, tries: P.tries }); }
     head(P.def.title, solved ? 'Réussi' : 'À refaire');
     msg(solved ? text : `${text} Il faut réussir cette position pour passer à la suivante.`, solved ? 'good' : score === 0 ? 'bad' : '');
     setBoard(P.c, P.orient, P.lastPlayed, false);
-    const hasMoves = P.c.history().length > 0;
-    actions([
-      solved ? ['Situation suivante', () => startSituation(id), true] : ['Réessayer', () => startSituation(id), true],
-      ...(hasMoves ? [['Analyser cette partie', () => openGame(pgnOfGame(score))]] : []),
-    ]);
+    actions(afterActions(over === undefined && P.c.turn() === P.user && !P.c.isGameOver()));
+  }
+
+  // Après le verdict, la partie peut se poursuivre jusqu'au mat : plus de limite de coups, plus d'Elo en jeu.
+  function continueFree() {
+    if (!P.done || P.c.isGameOver()) return;
+    P.done = false;
+    P.free = true;
+    P.thinking = false;
+    P.my = ++session;
+    subtitle();
+    msg('Partie libre : le résultat est déjà compté. À toi de jouer.');
+    setBoard(P.c, P.orient, P.lastPlayed, true, onSituationMove);
+    actions(afterActions());
   }
 
   /* ---------- Accueil des exercices ---------- */
@@ -428,7 +585,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     close() {
       session += 1;
       if (cancelPromo) cancelPromo();
-      if (engine) { engine.stop(); engine = null; }
+      dropEngine();
     },
   };
 }

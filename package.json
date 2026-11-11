@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "build": "node build.js",
-    "test": "node tests/run.mjs && node tests/corpus.mjs"
+    "test": "node tests/run.mjs && node tests/corpus.mjs && node tests/training.mjs"
   },
   "keywords": [],
   "author": "",

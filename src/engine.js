@@ -1,4 +1,5 @@
 import { MATE_CP, parseInfo } from './analysis.js';
+import { within } from './within.js';
 
 // Stockfish (version à un seul fil) est servi en fichiers à part, mis en cache par le service worker :
 // la page reste légère et le navigateur garde le code compilé d'une ouverture à l'autre.
@@ -10,6 +11,9 @@ const URL_SF = new URL('sf/engine.js', location.href).href;
 // Même quantité de calcul au total, terminée plus vite sur un téléphone à plusieurs cœurs.
 export const POOL_SIZE = Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 2) - 2));
 
+// Un moteur qui n'a pas répondu dans ce délai est considéré en panne (fichier manquant, onglet gelé).
+export const ENGINE_START_MS = 45000;
+
 export class Engine {
   constructor(hash = 32) {
     this.hash = hash;
@@ -17,6 +21,7 @@ export class Engine {
     this.waiting = null;
     this.last = null;
     this.failed = new Promise((_, reject) => {
+      this.fail = reject;
       this.worker.onerror = (e) => reject(new Error(e.message || 'moteur indisponible'));
     });
     this.failed.catch(() => {});
@@ -24,6 +29,8 @@ export class Engine {
   }
 
   onLine(line) {
+    // Panne signalée par l'enveloppe du moteur (fichier .wasm introuvable, par exemple).
+    if (line.startsWith('fatal ')) { this.fail(new Error(line.slice(6) || 'moteur indisponible')); return; }
     const info = parseInfo(line);
     if (info) this.last = info.pv.length || !this.last ? info : { ...info, pv: this.last.pv };
     if (info && this.multi && info.pv.length) this.multi.set(info.multipv, info);
@@ -43,7 +50,12 @@ export class Engine {
     return done ? Promise.race([done, this.failed]) : Promise.resolve();
   }
 
-  async init() {
+  // Si le moteur ne démarre pas (fichier introuvable, mémoire), l'attente échoue et le moteur est libéré.
+  async init(timeout = ENGINE_START_MS) {
+    try { await within(this.boot(), timeout, 'le moteur ne démarre pas'); } catch (err) { this.stop(); throw err; }
+  }
+
+  async boot() {
     await this.send('uci', 'uciok');
     await this.send(`setoption name Hash value ${this.hash}`);
     await this.send('ucinewgame');

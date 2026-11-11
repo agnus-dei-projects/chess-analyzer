@@ -1,4 +1,5 @@
 // Maia-3 tourne ici, hors du fil de l'interface : l'écran reste fluide pendant que l'adversaire réfléchit.
+import * as ort from 'onnxruntime-web';
 import { Maia3 } from 'maia3-js/web';
 
 let maia = null;
@@ -6,6 +7,8 @@ self.onmessage = async ({ data }) => {
   const { id, type } = data;
   try {
     if (type === 'load') {
+      // Le moteur de calcul ONNX est fourni par la page, qui l'a téléchargé avec reprise et mis en cache.
+      if (data.wasm) ort.env.wasm.wasmBinary = data.wasm;
       const m = new Maia3({ modelBytes: data.bytes, wasmPaths: data.base, numThreads: 1 });
       await m.load();
       maia = m;
