@@ -14,7 +14,7 @@ async function run(name, body, routes) { const { browser, page } = await open();
 await run('Verdict gagné, puis partie libre jusqu’au mat', async (page) => {
   await startAt(page, 'attack', '4kr2/R6p/8/4pq2/8/N7/PrPB1P1P/2KR4 b - - 1 21');
   const v = await best(page);
-  expect(v.ply >= 4 && /confirmée|mat/.test(v.msg) && v.delta === '+20', `le verdict demande au moins deux tours (ici ${v.ply / 2} coups)`);
+  expect((/mat/.test(v.msg) || (v.ply >= 4 && /confirmée/.test(v.msg))) && v.delta === '+50', `mat, ou verdict tenu au moins deux tours (ici ${Math.ceil(v.ply / 2)} coups : ${v.msg.slice(0, 40)})`);
   if (v.actions.includes('Continuer la partie')) {
     await click(page, 'Continuer la partie'); const f = await st(page);
     expect(f.free && !f.done && /Partie libre/.test(f.sub), 'la partie se poursuit librement');
@@ -26,10 +26,18 @@ await run('Verdict gagné, puis partie libre jusqu’au mat', async (page) => {
 await run('Trois essais manqués, puis changement de position', async (page) => {
   await startAt(page, 'pawn', '8/6p1/p3P3/3k3P/6P1/7K/8/8 b - - 0 1');
   let s;
-  for (let k = 1; k <= 3; k += 1) { s = await worst(page); if (k === 1) expect(s.ply >= 4 && s.delta === '−20' && !s.actions.includes('Passer cette position'), 'premier échec : Elo compté, pas encore de changement possible'); if (k === 2) expect(s.delta === '', 'deuxième essai : Elo inchangé'); if (k < 3) { await click(page, 'Réessayer'); await playable(page); } }
+  for (let k = 1; k <= 3; k += 1) { s = await worst(page); if (k === 1) expect(s.ply >= 4 && s.delta === '−50' && !s.actions.includes('Passer cette position'), 'premier échec : Elo compté, pas encore de changement possible'); if (k === 2) expect(s.delta === '', 'deuxième essai : Elo inchangé'); if (k < 3) { await click(page, 'Réessayer'); await playable(page); } }
   expect(s.tries === 3 && s.actions.includes('Passer cette position'), 'après trois échecs, on peut changer de position');
   const before = s.start; await click(page, 'Passer cette position'); await playable(page);
   expect((await st(page)).start !== before, 'une autre position est proposée');
+});
+await run('Elo de départ d’un thème jamais joué', async (page) => {
+  await page.evaluate(() => { localStorage.clear(); });
+  await page.evaluate(() => { location.hash = 'situation-rook'; }); await playable(page);
+  expect((await st(page)).elo === '800', 'sans aucun Elo établi : 800');
+  await page.evaluate(() => { location.hash = 'exercices'; localStorage.clear(); localStorage.setItem('elo-puzzle', JSON.stringify({ r: 1630, n: 40 })); localStorage.setItem('elo-pawn', JSON.stringify({ r: 1900, n: 20 })); localStorage.setItem('elo-attack', JSON.stringify({ r: 2400, n: 5 })); });
+  await page.evaluate(() => { location.hash = 'situation-rook'; }); await playable(page);
+  expect((await st(page)).elo === '1775', `démarre à la moyenne des Elo stabilisés (problèmes 1630, pions 1900 ; l’attaque, trop peu jouée, ne compte pas) : ${(await st(page)).elo}`);
 });
 await run('Abandon, analyse, identifiant inconnu', async (page) => {
   await startAt(page, 'rook'); await mv(page, (await sf.ev((await st(page)).fen, 8)).best); await click(page, 'Abandonner');

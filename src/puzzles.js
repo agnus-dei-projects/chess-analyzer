@@ -31,8 +31,10 @@ export function validPuzzle(p) {
 
 export const expected = (r, opp) => 1 / (1 + 10 ** ((opp - r) / 400));
 
+// L'Elo bouge vite au début pour rejoindre ton niveau en une trentaine d'essais, puis se stabilise.
+// (Simulation : avec l'ancien réglage, un joueur de 2000 parti de 800 n'était qu'à 1450 après 40 problèmes.)
 export function updateElo(rec, opp, score) {
-  const K = rec.n < 20 ? 40 : rec.n < 60 ? 24 : 16;
+  const K = rec.n < 15 ? 100 : rec.n < 30 ? 50 : rec.n < 80 ? 24 : 16;
   const delta = Math.round(K * (score - expected(rec.r, opp)));
   return { r: Math.max(100, rec.r + delta), n: rec.n + 1, delta };
 }

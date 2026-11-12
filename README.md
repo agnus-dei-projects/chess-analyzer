@@ -43,6 +43,16 @@ Règles du mode entraînement que ces tests protègent :
 - Un verdict donné par l'évaluation doit tenir deux tours de suite ; après le verdict, la partie peut se poursuivre librement jusqu'au mat.
 - Après trois essais manqués sur une même position, on peut en changer.
 
+## Elo des exercices
+
+- Chaque exercice (problèmes, chaque thème de mise en situation) a son Elo. Seul le premier essai d'une position ou d'un problème compte.
+- L'Elo bouge vite au début (±50 à niveau égal pendant les 15 premiers essais, ±25 jusqu'au 30e) puis se stabilise (±12, puis ±8 après 80 essais).
+- Un thème jamais joué démarre à la moyenne des Elo déjà stabilisés (au moins 15 essais), problèmes compris ; à défaut, à 800.
+- Mesures (novembre 2026) :
+  - Problèmes, joueurs simulés de force fixe, difficultés tirées de la vraie base : un joueur de 2000 parti de 800 atteint 1850 en 40 problèmes (1450 avec l'ancien réglage) ; de 500 à 2400, l'Elo finit à ±50 du vrai niveau, avec 46 à 54 % de réussite. Au-delà de 2400, la base manque de problèmes assez durs (moins de 2 % au-dessus de 2600).
+  - Mises en situation, joueurs simulés Maia 1100 et 1900 dont l'Elo des problèmes est établi : 56 % et 48 % de réussite sur leurs 50 premières parties. Médiane de 8 à 23 coups selon le thème ; 1 partie sur 100 finie en 2 coups ou moins (gaffe ou gain net, confirmé sur deux tours) ; aucune partie bloquée. Aucune des 234 positions de départ n'est déjà au-delà d'un seuil de réussite ou d'échec (Stockfish profondeur 14).
+  - Le thème « Ouverture agressive » n'a que 15 positions : elles reviennent vite.
+
 ## Bots (« Affronte un bot »)
 
 Un bot imite un vrai joueur à partir de ses parties. Le modèle (`src/bots/<nom>.json`) contient trois choses, et rien d'autre : ni parties, ni pseudo.

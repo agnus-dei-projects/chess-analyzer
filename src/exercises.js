@@ -56,7 +56,15 @@ const themesOf = (p) => (Array.isArray(p.themes) ? p.themes : String(p.themes ||
 
 export function createTrainer({ h, store, Engine, ensureMaia, openGame, username, display, say, hush, fx }) {
   const $ = (id) => document.getElementById(id);
-  const getElo = (id) => { try { return JSON.parse(store.get(SK(id))) || { r: START, n: 0 }; } catch { return { r: START, n: 0 }; } };
+  const readElo = (id) => { try { return JSON.parse(store.get(SK(id))); } catch { return null; } };
+  // Un exercice jamais joué démarre au niveau déjà établi ailleurs (moyenne des Elo stabilisés, problèmes compris),
+  // pas à 800 : un joueur fort n'a pas à gagner une quinzaine de fois avant d'affronter un adversaire à sa mesure.
+  const SETTLED = 15;
+  const seedElo = () => {
+    const known = ['puzzle', ...SITUATIONS.map((x) => x.id)].map(readElo).filter((e) => e && e.n >= SETTLED);
+    return known.length ? Math.round(known.reduce((a, e) => a + e.r, 0) / known.length / 25) * 25 : START;
+  };
+  const getElo = (id) => readElo(id) || { r: seedElo(), n: 0 };
   const setElo = (id, v) => store.set(SK(id), JSON.stringify(v));
   // Les problèmes démarrent désormais à 800 : remise à niveau unique des anciens profils.
   if (!store.get('puzzle-start-800')) { store.set(SK('puzzle'), JSON.stringify({ r: START, n: 0 })); store.set('puzzle-start-800', '1'); }

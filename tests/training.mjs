@@ -63,7 +63,8 @@ net('down', 'ok'); check((await Z.createPool(mem()).next(800)).id === 'li', 'bas
 net('ok', 'ok'); { const st = mem(); st.set('puzzle-pool', JSON.stringify([{ id: 'y', start: '8/8/8/8/8/8/8/8 w - - 0 1', solution: ['a1a2'], rating: 800, themes: [] }])); check((await Z.createPool(st).next(800)).id === 'a', 'entrée abîmée de la réserve écartée, puis réserve remplie'); }
 net('down', 'down'); { let failed = false; try { await Z.createPool(mem()).next(800); } catch { failed = true; } check(failed, 'tout en panne : une erreur est remontée (l’écran propose Réessayer)'); }
 { const st = mem(); st.set('puzzle-pool', JSON.stringify([a])); check((await Z.createPool(st).next(800)).id === 'a', 'hors connexion : la réserve suffit'); }
-const e = Z.updateElo({ r: 800, n: 0 }, 800, 1); check(e.r === 820 && e.delta === 20, 'Elo : +20 pour une première réussite à niveau égal');
+const e = Z.updateElo({ r: 800, n: 0 }, 800, 1); check(e.r === 850 && e.delta === 50, 'Elo : +50 pour une première réussite à niveau égal (démarrage rapide)');
+check(Z.updateElo({ r: 1500, n: 100 }, 1500, 1).delta === 8, 'Elo : +8 à niveau égal une fois stabilisé');
 
 // 4. Bots : le modèle de jakbot est cohérent et le choix des coups suit ses règles.
 const BOT = await load('bot.js');

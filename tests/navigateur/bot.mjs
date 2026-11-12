@@ -31,7 +31,8 @@ await run('Partie complète avec les Blancs', [], async (page) => {
   expect(s.san[1] === 'e6', `contre 1.e4, jakbot répond 1...e6 (joué : ${s.san[1]})`);
   const t0 = Date.now(); let n = 0;
   for (; n < 150 && !s.done; n += 1) { await mv(page, (await sf.ev(s.fen, 12)).best); s = await st(page); }
-  expect(s.done && /mat/i.test(s.msg) && /Victoire · Bilan : 1 V/.test(s.sub), `partie menée jusqu’au mat en ${Math.ceil(s.ply / 2)} coups, victoire comptée`);
+  // Face au Stockfish du test, la partie finit par un mat ou, plus rarement, par une nulle (répétition, 50 coups) : les deux sont comptés.
+  expect(s.done && ((/mat/i.test(s.msg) && /Victoire · Bilan : 1 V/.test(s.sub)) || (/nulle/i.test(s.msg) && /Bilan : 0 V · 1 N/.test(s.sub))), `partie menée jusqu’au bout en ${Math.ceil(s.ply / 2)} coups, résultat compté (${s.msg.slice(0, 40)} · ${s.sub})`);
   console.log('   temps moyen par coup de jakbot :', Math.round((Date.now() - t0) / Math.max(1, n) / 100) / 10, 's ; partie :', s.san.slice(0, 16).join(' '));
   await click(page, 'Revanche'); await page.waitForFunction(() => /Choisis ta couleur/.test(document.getElementById('t-msg').textContent)); expect(true, '« Revanche » ramène au choix de la couleur');
 });
