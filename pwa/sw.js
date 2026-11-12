@@ -15,7 +15,8 @@ const BIG = /\/maia\/(m\.onnx|ort-wasm[^/]*\.wasm)$/;
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys()
-    .then((keys) => Promise.all(keys.filter((k) => k !== CACHE && k !== MAIA).map((k) => caches.delete(k))))
+    // Les caches des modèles Maia (y compris le gros modèle des bots, rangé par la page) survivent aux mises à jour.
+    .then((keys) => Promise.all(keys.filter((k) => k !== CACHE && !k.startsWith('chess-analyzer-maia-')).map((k) => caches.delete(k))))
     .then(() => caches.open(MAIA))
     .then((c) => c.keys().then((reqs) => Promise.all(reqs.filter((r) => !BIG.test(new URL(r.url).pathname)).map((r) => c.delete(r)))))
     .then(() => self.clients.claim()));

@@ -1,12 +1,21 @@
-// Modèle Maia-3 5M (CSSLab, AGPL-3.0), chargé uniquement quand on en a besoin.
+// Modèles Maia-3 (CSSLab, AGPL-3.0), chargés uniquement quand on en a besoin.
 // Le calcul tourne dans un worker (maia-worker.mjs) ; ce module ne fait que lui parler.
 import { within } from './within.js';
 
-// Les deux gros fichiers (37 Mo au total) : le modèle et le moteur de calcul ONNX.
-// Leur taille exacte, relevée à la construction, sert à la progression et à vérifier le fichier reçu.
-const FILES = [['m.onnx', __MAIA_MODEL_BYTES__], ['ort-wasm-simd-threaded.wasm', __MAIA_WASM_BYTES__]];
-const TOTAL = FILES.reduce((n, f) => n + f[1], 0);
-const CACHE = 'chess-analyzer-maia-5m-v1'; // même nom que dans le service worker
+// Deux modèles, un seul en mémoire à la fois :
+// - 5m (22 Mo), livré avec l'appli : mises en situation, « Rejouer », et remplaçant du suivant ;
+// - 23m (93 Mo), téléchargé chez son éditeur à la première utilisation : il prédit mieux les coups d'un joueur
+//   donné (bots). Trop gros pour être livré avec l'appli.
+// La taille exacte de chaque fichier sert à la progression et à vérifier le fichier reçu.
+const WASM = ['ort-wasm-simd-threaded.wasm', __MAIA_WASM_BYTES__, null, 'chess-analyzer-maia-5m-v1'];
+const VARIANTS = {
+  '5m': [['m.onnx', __MAIA_MODEL_BYTES__, null, 'chess-analyzer-maia-5m-v1'], WASM],
+  '23m': [['maia3_23m.onnx', 92628155, 'https://huggingface.co/cemoss17/maia3-onnx/resolve/main/maia3_23m.onnx', 'chess-analyzer-maia-23m-v1'], WASM],
+};
+export const megabytes = (variant) => Math.round(VARIANTS[variant][0][1] / 1e6);
+let FILES = VARIANTS['5m'];
+let current = null; // modèle chargé ou en cours de chargement
+let generation = 0; // un chargement remplacé par un autre ne doit plus toucher à l'état commun
 const STALL_MS = 15000; // sans aucun octet reçu pendant ce temps, la connexion est relancée
 const TRIES = 3; // essais de suite sans le moindre progrès avant d'abandonner
 const LOAD_MS = 60000;
@@ -26,13 +35,14 @@ const have = new Map(); // octets déjà là, par fichier
 const report = (name, bytes) => {
   have.set(name, bytes);
   let got = 0;
-  FILES.forEach(([n, size]) => { got += Math.min(have.get(n) || 0, size); });
-  pct = Math.min(99, Math.round((got / TOTAL) * 100));
+  let total = 0;
+  FILES.forEach(([n, size]) => { got += Math.min(have.get(n) || 0, size); total += size; });
+  pct = Math.min(99, Math.round((got / total) * 100));
   listeners.forEach((fn) => fn(pct));
 };
 
-async function openCache() {
-  try { return typeof caches === 'undefined' ? null : await caches.open(CACHE); } catch { return null; }
+async function openCache(name) {
+  try { return typeof caches === 'undefined' ? null : await caches.open(name); } catch { return null; }
 }
 
 async function download(url, name, size) {
@@ -95,9 +105,9 @@ async function download(url, name, size) {
 }
 
 // Le fichier vient du cache s'il y est entier ; sinon il est téléchargé puis rangé dans le cache.
-async function getFile(base, name, size) {
-  const url = `${base}${name}`;
-  const cache = await openCache();
+async function getFile(base, [name, size, remote, cacheName]) {
+  const url = remote || `${base}${name}`;
+  const cache = await openCache(cacheName);
   if (cache) {
     try {
       const hit = await cache.match(url);
@@ -124,18 +134,30 @@ function call(msg, transfer) {
 
 // Arrête le worker ; le prochain chargement en recrée un (les fichiers sont alors dans le cache).
 function reset(err) {
+  generation += 1;
   if (worker) worker.terminate();
   worker = null;
   loading = null;
+  current = null;
   calls.forEach((c) => c.reject(err || new Error('Maia indisponible')));
   calls.clear();
 }
 
-export function load(base, onProgress) {
+export function load(base, onProgress, variant = '5m') {
+  // Un autre modèle est demandé : celui en place est déchargé (un seul en mémoire à la fois).
+  if (current && current !== variant) { listeners.clear(); reset(new Error('modèle remplacé')); }
   if (onProgress) { listeners.add(onProgress); if (loading) onProgress(pct); }
   if (!loading) {
+    current = variant;
+    FILES = VARIANTS[variant];
+    have.clear();
+    pct = 0;
+    const files = FILES;
+    const gen = generation;
+    const replaced = () => { if (gen !== generation) throw new Error('modèle remplacé'); };
     loading = (async () => {
-      const [model, wasm] = await Promise.all(FILES.map(([name, size]) => getFile(base, name, size)));
+      const [model, wasm] = await Promise.all(files.map((f) => getFile(base, f)));
+      replaced();
       try {
         worker = new Worker(`${base}maia-worker.mjs`, { type: 'module' });
         worker.onmessage = ({ data }) => {
@@ -148,12 +170,14 @@ export function load(base, onProgress) {
         await within(call({ type: 'load', bytes: model, wasm, base }, [model, wasm]), LOAD_MS, 'le modèle ne démarre pas');
       } catch (err) {
         // Des fichiers abîmés dans le cache seraient resservis à chaque essai : on les retire.
-        if (!err.timeout) { const cache = await openCache(); if (cache) await Promise.all(FILES.map(([name]) => cache.delete(`${base}${name}`))).catch(() => {}); }
+        if (!err.timeout && gen === generation) {
+          await Promise.all(files.map(async ([name, , remote, cacheName]) => { const cache = await openCache(cacheName); if (cache) await cache.delete(remote || `${base}${name}`); })).catch(() => {});
+        }
         throw err;
       }
-    })().then(() => { listeners.clear(); }, (err) => {
-      listeners.clear();
-      reset(err);
+    })().then(() => { if (gen === generation) listeners.clear(); }, (err) => {
+      // Un chargement remplacé entre-temps ne touche plus à rien : le suivant a déjà repris la main.
+      if (gen === generation) { listeners.clear(); reset(err); }
       throw err;
     });
   }

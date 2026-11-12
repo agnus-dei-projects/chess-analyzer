@@ -15,7 +15,7 @@ http.createServer((req, res) => {
   if (f) f.times -= 1;
   if (f && f.kind === 'status') { res.writeHead(f.at); res.end(); return; }
   if (start >= size) { res.writeHead(416); res.end(); return; }
-  const head = { 'Content-Type': types[path.extname(file)] || 'application/octet-stream', 'Content-Length': size - start, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store' };
+  const head = { 'Content-Type': types[path.extname(file)] || 'application/octet-stream', 'Content-Length': size - start, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' };
   if (range) head['Content-Range'] = `bytes ${start}-${size - 1}/${size}`;
   res.writeHead(range ? 206 : 200, head);
   if (f && (f.kind === 'cut' || f.kind === 'stall')) {

@@ -58,13 +58,23 @@ jakbot, construit sur 104 parties rapides (10 min) de juin à octobre 2026, 4 34
 | Maia à son Elo, sans le fil de la partie | 55,8 % | |
 | Maia à son Elo, avec le fil de la partie | 57,9 % | |
 | Bot, répertoire des 6 mois, netteté 1,75 | 62,7 % | 58,4 % |
-| Bot actuel : répertoire à deux étages, netteté 3 | 63,4 % | 61,6 % |
+| Bot : répertoire à deux étages, netteté 3, Maia 5M | 63,4 % | 61,6 % |
+| **Bot actuel : idem avec Maia 23M** | **64,3 %** | **63,0 %** |
 
 - **Répertoire à deux étages** : les 6 derniers mois d'abord (885 positions) ; à défaut, les positions de ses parties rapides et blitz depuis juin 2024 (1 709 parties) vues au moins deux fois et où il joue le même coup au moins 7 fois sur 10 (815 positions). Le répertoire couvre 13,5 % de ses coups (10,1 % avant) et il y joue le coup prévu 95 % du temps.
 - **Netteté 3** : le bot joue plus souvent le premier choix de Maia. Contrepartie mesurée : il se trompe un peu moins que le joueur (13,9 % de coups perdant au moins un pion contre 15,3 %, Stockfish profondeur 10) et varie moins. À 1,75 les taux d'erreur étaient égaux, mais son coup était moins souvent celui du bot.
 - **Plafond** : hors répertoire, le premier choix de Maia est son coup 58,4 % du temps, et son coup est parmi les trois premiers choix 86 % du temps. Maia elle-même n'accorde en moyenne que 60 % à son premier choix : dans la plupart des positions, plusieurs coups sont plausibles pour un même joueur.
 - Essayé et écarté, faute de gain mesurable : repondérer les coups par des habitudes de jeu (échanges, échecs, pièces jouées, roques, jugement du moteur) ; régler Maia sur un autre Elo que le sien (1900, 2400, 2700).
-- Non essayé : les modèles Maia plus gros (23M, 79M), et un réentraînement de Maia sur ses parties (la publication de référence n'obtient un gain, de 4 à 5 points, qu'à partir de 5 000 parties par joueur).
+- **Taille du modèle Maia** (mêmes 3 761 coups hors répertoire, netteté 3, Stockfish profondeur 10 ; le joueur y perd au moins un pion dans 13,8 % des coups) :
+
+  | Modèle | Taille | Calcul par coup* | Son coup = 1er choix | Son coup = coup joué | Coups perdant ≥1 pion |
+  |---|---|---|---|---|---|
+  | 5M | 23 Mo | 43 ms | 63,3 % | 61,5 % | 12,4 % |
+  | 23M | 93 Mo | 130 ms | 64,3 % | 63,0 % | 11,3 % |
+  | 79M | 313 Mo | 430 ms | 65,3 % | 63,8 % | 11,6 % |
+
+  \* Chrome sur serveur, un seul cœur ; un téléphone est plus lent. Les bots utilisent le 23M : il est téléchargé chez son éditeur (Hugging Face) à la première partie, puis gardé en cache ; s'il ne vient pas, le 5M livré avec l'appli prend le relais. Le 79M gagne encore 0,8 point mais pèse 313 Mo, trop pour un téléphone.
+- Non essayé : un réentraînement de Maia sur ses parties (la publication de référence n'obtient un gain, de 4 à 5 points, qu'à partir de 5 000 parties par joueur).
 
 Pour refaire ou ajouter un bot : `tests/bots/` (étapes numérotées en tête de chaque fichier). Les parties viennent de l'API publique de Chess.com et ne sont pas dans le dépôt.
 

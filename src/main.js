@@ -906,10 +906,11 @@ const VARIATION_MAX_PLIES = 300;
 const THREAT_DEPTH = 8;
 let maiaModule = null;
 
-async function ensureMaia(onProgress) {
+// variant : '5m' (livré avec l'appli) par défaut, '23m' pour les bots.
+async function ensureMaia(onProgress, variant) {
   const base = new URL('maia/', location.href).href;
   maiaModule = maiaModule || await import(`${base}maia.mjs`);
-  await maiaModule.load(base, onProgress);
+  await maiaModule.load(base, onProgress, variant);
   return maiaModule;
 }
 
