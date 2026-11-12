@@ -11,7 +11,7 @@ import JAKBOT from './bots/jakbot.json';
 
 // Bots : chacun imite un vrai joueur, d'après ses parties (voir tests/bots/ pour la construction du modèle).
 export const BOTS = [
-  { id: 'jakbot', name: 'jakbot', icon: '♚', elo: JAKBOT.elo, variant: '23m', blurb: `Imite un vrai joueur d’environ ${JAKBOT.elo} Elo en rapide : ses ouvertures, ses habitudes, sa précision.`, model: JAKBOT },
+  { id: 'jakbot', name: 'jakbot', icon: '♚', elo: JAKBOT.elo, blurb: `Imite un vrai joueur d’environ ${JAKBOT.elo} Elo en rapide : ses ouvertures, ses habitudes, sa précision.`, model: JAKBOT },
 ];
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -365,7 +365,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
   const abandon = () => ['Abandonner cet essai', () => endSituation(0, 'Essai abandonné.', false)];
   const sideName = () => (P.user === 'w' ? 'Blancs' : 'Noirs');
   const subtitle = () => {
-    if (P.bot) { head(P.bot.name, `Tu as les ${sideName()}${!P.maia ? ' · moteur seul' : P.variant !== P.bot.variant ? ' · modèle léger' : ''} · ${recordText(P.id)}`); return; }
+    if (P.bot) { head(P.bot.name, `Tu as les ${sideName()}${P.maia ? '' : ' · moteur seul'} · ${recordText(P.id)}`); return; }
     const rival = `Adversaire ${getElo(P.id).r}${P.maia ? '' : ' (moteur)'}`;
     if (P.free) { head(P.def.title, `Partie libre · ${rival} · ${sideName()}`); return; }
     const left = Math.max(0, Math.ceil((P.def.cap - P.ply) / 2));
@@ -439,7 +439,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
       const prior = P.c.history({ verbose: true }).slice(-8).map((m) => m.before);
       for (let attempt = 0; P.maia && !policy && attempt < 2; attempt += 1) {
         try {
-          const m = await ensureMaia(undefined, P.variant);
+          const m = await ensureMaia();
           if (my !== session) return null;
           policy = (await m.policy(fen, elo, elo, prior)).filter((x) => legalIn(fen, x[0]));
         } catch { policy = null; }
@@ -675,12 +675,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     msg(`Chargement de ${bot.name}…`);
     let maiaError = null;
     let waiting = true;
-    // Le bot joue avec le gros modèle de Maia, qui prédit mieux ses coups. S'il ne vient pas (téléchargement
-    // impossible, mémoire), le modèle livré avec l'appli le remplace ; à défaut, le moteur.
-    const progress = (label) => (pct) => { if (my === session && waiting) msg(`Chargement de ${bot.name} : ${pct} %${label}`); };
-    P.variant = bot.variant;
-    const human = ensureMaia(progress(' (93 Mo, la première fois seulement)'), bot.variant)
-      .catch(() => { if (my !== session) throw new Error('écran quitté'); P.variant = '5m'; return ensureMaia(progress(''), '5m'); })
+    const human = ensureMaia((pct) => { if (my === session && waiting) msg(`Chargement de ${bot.name} : ${pct} %`); })
       .then(() => true, (err) => { maiaError = err; return false; });
     // Le bot joue avec Maia ; le moteur n'est que son remplaçant. Il suffit que l'un des deux soit là.
     let engineError = null;
@@ -694,8 +689,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     }
     P.maia = maiaReady;
     subtitle();
-    const note = !P.maia ? ` Le modèle de ${bot.name} n’a pas pu être chargé (${reason(maiaError)}) : il joue avec le moteur seul, sans son style.`
-      : P.variant !== bot.variant ? ` Son modèle complet n’a pas pu être chargé : ${bot.name} joue avec le modèle léger, un peu moins fidèle.` : '';
+    const note = P.maia ? '' : ` Le modèle de ${bot.name} n’a pas pu être chargé (${reason(maiaError)}) : il joue avec le moteur seul, sans son style.`;
     if (c.turn() === user) {
       P.thinking = false;
       msg(`${resumed ? 'Partie reprise. ' : ''}À toi de jouer.${note}`);

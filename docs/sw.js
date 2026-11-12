@@ -1,5 +1,5 @@
 // Garde l'application disponible hors connexion. Les appels à Chess.com ne passent pas par le cache.
-const CACHE = 'chess-analyzer-4713911772';
+const CACHE = 'chess-analyzer-7317e23f40';
 const MAIA = 'chess-analyzer-maia-5m-v1'; // conservé d'une version à l'autre : 22 Mo à ne pas retélécharger
 const FONTS = ['young-serif-400', 'instrument-sans-400', 'instrument-sans-500', 'instrument-sans-600', 'jetbrains-mono-400', 'jetbrains-mono-600'].map((f) => `fonts/${f}.woff2`);
 const SF = ['sf/engine.js', 'sf/stockfish.js', 'sf/engine.wasm'];
@@ -15,8 +15,7 @@ const BIG = /\/maia\/(m\.onnx|ort-wasm[^/]*\.wasm)$/;
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys()
-    // Les caches des modèles Maia (y compris le gros modèle des bots, rangé par la page) survivent aux mises à jour.
-    .then((keys) => Promise.all(keys.filter((k) => k !== CACHE && !k.startsWith('chess-analyzer-maia-')).map((k) => caches.delete(k))))
+    .then((keys) => Promise.all(keys.filter((k) => k !== CACHE && k !== MAIA).map((k) => caches.delete(k))))
     .then(() => caches.open(MAIA))
     .then((c) => c.keys().then((reqs) => Promise.all(reqs.filter((r) => !BIG.test(new URL(r.url).pathname)).map((r) => c.delete(r)))))
     .then(() => self.clients.claim()));
