@@ -110,6 +110,11 @@ let illegalBook = 0; let n = 0;
 for (const [k, moves] of Object.entries(OD.book)) { for (const [u] of moves) { n += 1; if (!legal(`${k} 0 1`, u)) illegalBook += 1; } }
 check(illegalBook === 0 && n > 3000, `variantes connues : ${n} coups, tous légaux`);
 check(OD.openings.reduce((a, o) => a + o.traps.filter((t) => !t.auto).length, 0) === 13, 'les 13 pièges classiques ont passé la vérification du moteur');
+const CK = JSON.parse(fs.readFileSync(path.join(root, 'src/openings-checks.json')));
+const ckBad = OPENINGS.filter((o) => { const c = CK.openings[o.id]; return !c || c.forces.length !== o.forces.length || c.faiblesses.length !== o.faiblesses.length; }).map((o) => o.id);
+const contredites = OPENINGS.flatMap((o) => [...CK.openings[o.id].forces, ...CK.openings[o.id].faiblesses].filter((x) => x.v === 'ko').map(() => o.id));
+check(!ckBad.length, `chaque force et faiblesse a sa vérification${ckBad.length ? ` (manque : ${ckBad.join(', ')})` : ''}`);
+check(!contredites.length, `aucune force ou faiblesse contredite par les parties simulées${contredites.length ? ` (${contredites.join(', ')})` : ''}`);
 
 console.log(bad ? `${bad} contrôle(s) en échec` : 'Mode entraînement : tous les contrôles passent');
 process.exit(bad ? 1 : 0);

@@ -9,6 +9,7 @@ import POSITIONS from './situations.json';
 import { bookMove, pickFromPolicy, thinkMs } from './bot.js';
 import JAKBOT from './bots/jakbot.json';
 import { OPENINGS } from './openings-def.js';
+import CHECKS from './openings-checks.json';
 
 // Bots : chacun imite un vrai joueur, d'après ses parties (voir tests/bots/ pour la construction du modèle).
 export const BOTS = [
@@ -781,6 +782,12 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
   }
   const sec = (title, ...kids) => h('section', { class: 'c-sec' }, h('h3', {}, title), ...kids);
   const list = (items) => h('ul', {}, ...items.map((t) => h('li', {}, figText(t))));
+  // Forces et faiblesses : chaque affirmation est suivie de sa vérification sur les parties simulées (tests/ouvertures/verifier.mjs).
+  const MARK = { ok: ['✓', 'Confirmé'], nt: ['≈', 'Non tranché'], nm: ['·', 'Non mesurable'], ko: ['✗', 'Contredit'] };
+  const checked = (items, checks) => h('ul', { class: 'c-checked' }, ...items.map((t, i) => {
+    const c = (checks || [])[i];
+    return h('li', {}, figText(t), c ? h('small', { class: `c-check c-${c.v}` }, `${MARK[c.v][0]} ${MARK[c.v][1]} : ${figText(c.d.replace(/^non mesurable : /, ''))}`) : '');
+  }));
 
   async function showCourse(id) {
     const my = freshSession();
@@ -810,8 +817,8 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
     box.replaceChildren(
       st[0].runs + st[1].runs ? h('p', { class: 'c-note' }, `Tes entraînements : avec les Blancs ${st[0].clean} sans faute sur ${st[0].runs}, avec les Noirs ${st[1].clean} sur ${st[1].runs}.`) : '',
       sec('Ligne principale', lineEl(o.main)),
-      sec('Forces', list(o.forces)),
-      sec('Faiblesses', list(o.faiblesses)),
+      sec('Forces', checked(o.forces, (CHECKS.openings[id] || {}).forces)),
+      sec('Faiblesses', checked(o.faiblesses, (CHECKS.openings[id] || {}).faiblesses)),
       sec(`Contre cette ouverture (${sideFr(facing)})`, h('p', {}, figText(o.against)),
         h('p', { class: 'c-note' }, 'Les coups principaux : évaluation de Stockfish (pour les Blancs) et part des joueurs de 1500 qui les jouent (Maia).'),
         h('div', { class: 'c-rows' }, ...o.best.map((b) => h('div', { class: 'c-row' }, lineEl([...o.root, b.uci], { from: o.root.length }), h('span', {}, `éval. ${evalText(b.cp, b.mate, turn0)}`), h('span', { class: 'muted' }, `joué ${pct(b.pop)}`))))),
@@ -822,7 +829,7 @@ export function createTrainer({ h, store, Engine, ensureMaia, openGame, username
         h('h4', {}, figText(t.title), h('small', {}, ` · pour les ${sideFr(other(t.victim))}, à éviter par les ${sideFr(t.victim)}`)),
         lineEl(t.moves, { bait: t.bait }), h('p', {}, figText(t.text))))) : '',
       o.variations.length ? sec('Variantes (noms Lichess)', ...o.variations.map((v) => h('div', { class: 'c-var' }, h('strong', {}, v.name.replace(/^[^:]*:\s*/, '') || v.name), lineEl(v.moves, { from: o.root.length })))) : '',
-      h('p', { class: 'c-note' }, OPS.source),
+      h('p', { class: 'c-note' }, `${OPS.source} Forces et faiblesses : ${CHECKS.method}`),
     );
   }
 

@@ -12,7 +12,9 @@ import { OPENINGS } from '../../src/openings-def.js';
 import { CLASSIC_TRAPS } from './pieges-classiques.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const [step, work, ...rest] = process.argv.slice(2);
+// Les étapes ne s'exécutent que si ce fichier est lancé directement (simuler.mjs n'en importe que le moteur).
+const direct = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+const [step, work, ...rest] = direct ? process.argv.slice(2) : [];
 if (work) fs.mkdirSync(work, { recursive: true });
 const W = (f) => path.join(work, f);
 const load = (f) => JSON.parse(fs.readFileSync(W(f)));
