@@ -12,13 +12,15 @@ const out = r('src/template.html').toString()
   .replace('/*CHESSGROUND*/', () => css)
   .replace('/*BUNDLE*/', () => js);
 const crypto = require('crypto');
-const version = crypto.createHash('sha1').update(out).update(r('pwa/sw.js')).update(r('src/engine-worker.js')).update(r('src/maia.js')).update(r('src/maia-worker.js')).update(r('node_modules/stockfish/package.json')).digest('hex').slice(0, 10);
+const version = crypto.createHash('sha1').update(out).update(r('src/openings.json')).update(r('pwa/sw.js')).update(r('src/engine-worker.js')).update(r('src/maia.js')).update(r('src/maia-worker.js')).update(r('node_modules/stockfish/package.json')).digest('hex').slice(0, 10);
 fs.mkdirSync('dist/app', { recursive: true });
 fs.writeFileSync('dist/app/index.html', out);
 for (const f of fs.readdirSync('pwa')) {
   const body = fs.readFileSync('pwa/' + f);
   fs.writeFileSync('dist/app/' + f, f === 'sw.js' ? body.toString().replace('__VERSION__', version) : body);
 }
+// Données des ouvertures (coups, évaluations, variantes) : chargées au premier besoin, mises en cache.
+fs.copyFileSync('src/openings.json', 'dist/app/openings.json');
 // Stockfish et polices : fichiers à part, mis en cache par le service worker.
 fs.mkdirSync('dist/app/sf', { recursive: true });
 fs.rmSync('dist/app/sf', { recursive: true, force: true });

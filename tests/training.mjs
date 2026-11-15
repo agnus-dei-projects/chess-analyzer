@@ -87,5 +87,29 @@ const draws = { }; for (let i = 0; i < 2000; i += 1) { const u = BOT.pickFromPol
 check(!draws.h2h4 && draws.a2a3 / 2000 > 0.5 && draws.c2c3 > 0, 'tirage : les coups jugés improbables par Maia sont écartés, la netteté favorise le premier choix sans supprimer les autres');
 const t = [0, 20, 60].map((ply) => BOT.thinkMs(JAK, ply, () => 0.5)); check(t.every((x) => x >= 400 && x <= 3500) && t[1] > t[0], 'rythme : il réfléchit plus en milieu de partie qu’à l’ouverture, dans des limites raisonnables');
 
+// 5. Ouvertures : textes et données calculées cohérents, tous les coups légaux.
+const { OPENINGS } = await load('openings-def.js');
+const OD = JSON.parse(fs.readFileSync(path.join(root, 'src/openings.json')));
+const legal = (fen, u) => { try { return !!new Chess(fen).move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] }); } catch { return false; } };
+const replay = (ucis) => { const c = new Chess(); for (const u of ucis) { if (!legal(c.fen(), u)) return null; c.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] }); } return c; };
+check(OPENINGS.length === 30 && OD.openings.length === 30 && OPENINGS.every((o) => OD.openings.some((x) => x.id === o.id)), '30 ouvertures, textes et données appariés');
+check(OPENINGS.filter((o) => o.side === 'w').length === 15, '15 ouvertures des Blancs, 15 défenses des Noirs');
+let badOps = [];
+for (const o of OD.openings) {
+  const d = OPENINGS.find((x) => x.id === o.id);
+  const r = replay(o.root); const m = replay(o.main);
+  if (!r || !m || o.main.slice(0, o.root.length).join() !== o.root.join() || r.turn() === d.side) badOps.push(`${o.id} départ/ligne`);
+  if (!o.best.length || !o.best.every((b) => legal(r.fen(), b.uci))) badOps.push(`${o.id} meilleurs coups`);
+  if (!o.replies.length || !o.replies.every((x) => legal(r.fen(), x.uci) && x.answer)) badOps.push(`${o.id} réponses`);
+  for (const t of o.traps) { const c = replay(t.moves); if (!c || t.bait >= t.moves.length || !['w', 'b'].includes(t.victim) || !t.text) badOps.push(`${o.id} piège ${t.title}`); }
+  for (const v of o.variations) if (!replay(v.moves)) badOps.push(`${o.id} variante ${v.name}`);
+  if (!d.idea || d.forces.length < 1 || d.faiblesses.length < 1 || !d.against || !d.with) badOps.push(`${o.id} textes`);
+}
+check(!badOps.length, `ouvertures : départs, lignes, meilleurs coups, réponses, pièges et variantes jouables${badOps.length ? ` (${badOps.slice(0, 5).join(', ')})` : ''}`);
+let illegalBook = 0; let n = 0;
+for (const [k, moves] of Object.entries(OD.book)) { for (const [u] of moves) { n += 1; if (!legal(`${k} 0 1`, u)) illegalBook += 1; } }
+check(illegalBook === 0 && n > 3000, `variantes connues : ${n} coups, tous légaux`);
+check(OD.openings.reduce((a, o) => a + o.traps.filter((t) => !t.auto).length, 0) === 13, 'les 13 pièges classiques ont passé la vérification du moteur');
+
 console.log(bad ? `${bad} contrôle(s) en échec` : 'Mode entraînement : tous les contrôles passent');
 process.exit(bad ? 1 : 0);

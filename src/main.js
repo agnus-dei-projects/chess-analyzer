@@ -1319,7 +1319,7 @@ refreshAll();
 /* ---------- Navigation ---------- */
 
 const trainer = createTrainer({
-  h, store, Engine, ensureMaia, display, fx,
+  h, store, Engine, ensureMaia, display, fx, fig,
   say: (list) => { if (voice.auto) voice.say(list.map((t) => spoken(t))); else voice.stop(); },
   hush: () => voice.stop(),
   openGame: (pgn) => { location.hash = 'analyse'; openGame(pgn, `train:${Date.now()}`); },
@@ -1334,13 +1334,17 @@ const SCREENS = {
   bilan: { id: 'analyse', tab: 'bilan', title: 'Analyse de partie', back: () => (phone() ? 'analyse' : '') },
   exercices: { id: 'hub', title: 'Exercices', back: () => '' },
   bots: { id: 'bots', title: 'Affronte un bot', back: () => '' },
+  ouvertures: { id: 'openings', title: 'Ouvertures', back: () => 'exercices' },
   problemes: { id: 'train', title: 'Problèmes', back: () => 'exercices' },
 };
 function route() {
   const key = location.hash.slice(1);
   if (key === 'analyse' && !state.game) { location.replace('#parties'); return; }
-  const sit = key.startsWith('situation-') ? key.slice(10) : key.startsWith('bot-') ? `bot:${key.slice(4)}` : null;
-  const def = sit ? { id: 'train', title: trainer.titleOf(sit), back: () => (sit.startsWith('bot:') ? 'bots' : 'exercices') } : (SCREENS[key] || SCREENS['']);
+  // ouverture-<id> : cours ; ouv-<id>-<w|b> : entraînement sur cette ouverture avec cette couleur.
+  const ouvx = /^ouv-(.+)-([wb])$/.exec(key);
+  const sit = key.startsWith('situation-') ? key.slice(10) : key.startsWith('bot-') ? `bot:${key.slice(4)}` : key.startsWith('ouverture-') ? `ouv:${key.slice(10)}` : ouvx ? `ouvx:${ouvx[1]}:${ouvx[2]}` : null;
+  const backOf = (s) => (s.startsWith('bot:') ? 'bots' : s.startsWith('ouv:') ? 'ouvertures' : s.startsWith('ouvx:') ? `ouverture-${s.split(':')[1]}` : 'exercices');
+  const def = sit ? { id: 'train', title: trainer.titleOf(sit), back: () => backOf(sit) } : (SCREENS[key] || SCREENS['']);
   document.body.dataset.screen = def.id;
   document.querySelectorAll('.screen').forEach((s) => { s.hidden = s.id !== `screen-${def.id}`; });
   $('bar-title').textContent = def.title;
@@ -1354,6 +1358,7 @@ function route() {
   voice.stop();
   if (def.tab) setTab(def.tab);
   if (def.id === 'hub' || def.id === 'home' || def.id === 'bots') trainer.renderHub();
+  if (def.id === 'openings') trainer.renderOpenings();
   if (def.id === 'train') trainer.open(sit || 'puzzle'); else trainer.close();
   if (def.id === 'analyse') { cg.redrawAll(); renderChart(); }
 }

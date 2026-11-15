@@ -53,6 +53,20 @@ Règles du mode entraînement que ces tests protègent :
   - Mises en situation, joueurs simulés Maia 1100 et 1900 dont l'Elo des problèmes est établi : 56 % et 48 % de réussite sur leurs 50 premières parties. Médiane de 8 à 23 coups selon le thème ; 1 partie sur 100 finie en 2 coups ou moins (gaffe ou gain net, confirmé sur deux tours) ; aucune partie bloquée. Aucune des 234 positions de départ n'est déjà au-delà d'un seuil de réussite ou d'échec (Stockfish profondeur 14).
   - Le thème « Ouverture agressive » n'a que 15 positions : elles reviennent vite.
 
+## Ouvertures
+
+Menu Exercices → Ouvertures : 30 ouvertures (15 des Blancs, 15 défenses des Noirs), chacune avec un cours et un entraînement avec l'une ou l'autre couleur.
+
+- **Cours** : idée, ligne principale, forces et faiblesses (textes rédigés dans `src/openings-def.js`) ; puis, calculés : les coups principaux contre l'ouverture (évaluation Stockfish et part des joueurs de 1500 qui les jouent selon Maia), les réponses les plus jouées avec la meilleure réplique, les pièges, et les variantes nommées par Lichess. Chaque coup cité est cliquable.
+- **Entraînement** : les coups de départ sont joués d'office ; l'adversaire suit ensuite les variantes connues (16 demi-coups), tirées selon leur popularité, en favorisant les pièges de l'ouverture, puis joue avec Maia à ton niveau. Tes 10 coups suivants sont vérifiés par Stockfish (profondeur 12) : un coup qui perd au moins 0,9 pion (1,5 pour un coup de variante nommée) est signalé avec le meilleur coup, et tu peux le rejouer. Un piège connu est reconnu et expliqué. La partie peut ensuite continuer librement.
+- **Données** (`src/openings.json`, construit par `tests/ouvertures/construire.mjs`, étapes en tête du fichier) :
+  - variantes : 3 600 lignes nommées de la base Lichess (github.com/lichess-org/chess-openings, domaine public), 4 081 positions ;
+  - popularité : Maia-3 à 1500 Elo ; l'explorateur d'ouvertures de Lichess n'a pas pu être interrogé ;
+  - lignes principales : chaque coup contrôlé par Stockfish (profondeur 16) ; aucun ne perd plus de 0,6 pion ;
+  - 13 pièges classiques (`tests/ouvertures/pieges-classiques.mjs`) : le coup fautif perd au moins 0,9 pion et chaque coup de la punition est à moins de 0,5 pion du meilleur selon Stockfish (profondeur 16) ; deux textes ont été corrigés après vérification (piège sibérien, gambit dame accepté), deux autres nuancés (Petrov, foie frit) ;
+  - 57 pièges trouvés automatiquement : un coup que Maia 1500 joue au moins une fois sur dix, dans une position équilibrée, et qui perd au moins deux pions (profondeur 12, confirmé à 16). Leur texte ne contient que la perte chiffrée et la suite du moteur.
+  - Londres, catalane, Réti et Benoni n'ont aucun piège : aucun coup naturel n'y perd deux pions dans les variantes retenues.
+
 ## Bots (« Affronte un bot »)
 
 Un bot imite un vrai joueur à partir de ses parties. Le modèle (`src/bots/<nom>.json`) contient trois choses, et rien d'autre : ni parties, ni pseudo.

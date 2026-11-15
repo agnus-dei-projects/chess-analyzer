@@ -109,6 +109,21 @@ a { color: inherit; text-decoration: none; }
 #t-msg { margin: 0; font-size: 15px; font-weight: 600; min-height: 22px; }
 #t-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 #t-actions button { flex: 1; min-height: 44px; }
+/* Cours d'ouverture : sections sous l'échiquier, coups cliquables. */
+#t-course { display: flex; flex-direction: column; gap: 14px; padding-bottom: 24px; }
+#t-course h3 { margin: 0 0 6px; font: 600 15px var(--body); }
+#t-course h4 { margin: 0 0 4px; font-size: 14px; }
+#t-course h4 small { font-weight: 400; color: var(--muted); }
+#t-course p, #t-course ul { margin: 4px 0; font-size: 14px; line-height: 1.45; }
+#t-course ul { padding-left: 20px; }
+#t-course .c-note { color: var(--muted); font-size: 13px; }
+#t-course .c-line { display: inline-flex; flex-wrap: wrap; gap: 0 2px; }
+#t-course .c-rows { display: flex; flex-direction: column; gap: 4px; }
+#t-course .c-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 13px; }
+#t-course .c-trap, #t-course .c-var { padding: 8px 10px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); }
+#t-course .c-var strong { display: block; font-size: 13px; }
+#t-course .muted { color: var(--muted); }
+.mv.bad { color: var(--blunder); font-weight: 600; text-decoration: underline; }
 cg-board square.move-dest { background: radial-gradient(rgba(47, 107, 79, .55) 22%, transparent 24%); }
 cg-board square.oc.move-dest { background: radial-gradient(transparent 62%, rgba(47, 107, 79, .55) 64%); }
 cg-board square.selected { background-color: var(--lastmove); }
@@ -362,12 +377,20 @@ td:last-child { text-align: right; }
   </div>
 </section>
 
+<section id="screen-openings" class="screen" hidden>
+  <div class="menu">
+    <div class="tiles" id="ouv-list"></div>
+  </div>
+</section>
+
 <section id="screen-hub" class="screen" hidden>
   <div class="menu">
     <p class="section-cap">Tactique</p>
     <a class="tile" href="#problemes"><span class="tile-ic" aria-hidden="true">♝</span><span class="tile-main"><strong>Problèmes</strong><small>Trouve la bonne suite. Du premier coup, ton Elo monte.</small></span><span class="elo-chip" id="hub-puzzle-elo">800</span></a>
     <p class="section-cap">Mises en situation</p>
     <div class="tiles" id="hub-sits"></div>
+    <p class="section-cap">Ouvertures</p>
+    <a class="tile" href="#ouvertures"><span class="tile-ic" aria-hidden="true">♘</span><span class="tile-main"><strong>Ouvertures</strong><small>30 ouvertures : cours, pièges classiques et entraînement contre leurs variantes.</small></span></a>
   </div>
 </section>
 
@@ -380,6 +403,7 @@ td:last-child { text-align: right; }
     <div id="tboard"></div>
     <p id="t-msg" aria-live="polite"></p>
     <div id="t-actions"></div>
+    <div id="t-course" hidden></div>
   </div>
 </section>
 
