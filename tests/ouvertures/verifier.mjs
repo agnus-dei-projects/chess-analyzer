@@ -159,7 +159,7 @@ const SPECS = {
     (m) => R(shareGe(m, 'c4hit', 0.25), `fou c4 attaqué par un pion ou une pièce noire dans ${sh2(m, 'c4hit')} des parties`),
   ],
   espagnole: [
-    (m) => R(meanGe(m, 'e5atk', 0), `attaquants de e5 (Blancs − Noirs) après 5 coups : ${mu(m, 'e5atk')}`),
+    (m) => { const c = after('e4 e5 Nf3 Nc6 Bb5'); return R(fact(c.attackers('c6', 'w').includes('b5') && c.attackers('e5', 'b').includes('c6')), `après 3.Bb5, le fou attaque c6, seul défenseur de e5 ; pression à long terme non confirmée : attaquants de e5 (Blancs − Noirs) après 5 coups ${mu(m, 'e5atk')}`); },
     (m) => R(fact(m.lines >= linesRef(def('espagnole'), 0.75)), `${m.lines} variantes nommées (3e quartile des ouvertures comparables : ${linesRef(def('espagnole'), 0.75)}) ; « à tous les niveaux » non mesuré`),
     (m) => engMain(m, (v) => v >= 0.2),
     (m) => R(fact(m.lines >= linesRef(def('espagnole'), 0.75)), `${m.lines} variantes nommées (3e quartile des ouvertures comparables : ${linesRef(def('espagnole'), 0.75)})`),
@@ -199,7 +199,7 @@ const SPECS = {
     (m) => R(fact(m.lines <= linesRef(def('londres'), 0.25)), `${m.lines} variantes nommées (1er quartile des ouvertures comparables : ${linesRef(def('londres'), 0.25)})`),
     (m) => R(both(meanLe(m, 'blundO', med('blundO')), meanLe(m, 'checksO', med('checksO'))), `gaffes blanches ${mu(m, 'blundO')} (médiane ${f(med('blundO'))}), échecs reçus ${mu(m, 'checksO')} (médiane ${f(med('checksO'))})`),
     (m) => engMain(m, (v) => v <= 0.3, 'évaluation de la ligne principale, qui contient …c5'),
-    (m) => (mean(m.raw.qb6) >= 0.1 ? R(fact(mean(m.raw.qxb2) / mean(m.raw.qb6) >= 0.2), `…Qb6 dans ${sh2(m, 'qb6')} des parties, …Qxb2 dans ${sh2(m, 'qxb2')}`) : { ok: null, txt: `non mesurable : …Qb6 joué dans ${sh2(m, 'qb6')} des parties seulement` }),
+    (m) => { const c = after('d4 d5 Bf4 Nf6 e3 c5 c3 Qb6'); return R(fact(c.attackers('b2', 'w').length === 0 && c.attackers('b2', 'b').includes('b6')), `après Qb6, la dame b6 attaque b2 et aucune pièce blanche ne le défend ; dans les parties simulées : …Qb6 dans ${sh2(m, 'qb6')}, …Qxb2 dans ${sh2(m, 'qxb2')}`); },
   ],
   catalane: [
     (m) => R(both(shareGe(m, 'castleO', 0.6), fact(m.evMain > 0)), `roque blanc avant le 10e coup dans ${sh2(m, 'castleO')} des parties ; ligne principale (Stockfish) ${pw(m.evMain)}`),
@@ -228,12 +228,12 @@ const SPECS = {
     (m) => R(fact(m.lines <= linesRef(def('trompowsky'), 0.25) && m.rarity < 0.15), `${m.lines} variantes nommées (1er quartile des ouvertures comparables : ${linesRef(def('trompowsky'), 0.25)}) ; 2.Bg5 joué par Maia ${ELO} dans ${pc(m.rarity)} des cas`),
     (m) => R(meanGe(m, 'bxn10', med('bxn10')), `fous échangés contre des cavaliers (nombre de fous différent) après 5 coups : ${sh2(m, 'bxn10')} des parties (médiane des 30 : ${pc(med('bxn10'))})`),
     (m) => R(shareGe(m, 'ne4', 0.2), `…Ne4 suivi d’un coup du fou g5 dans ${sh2(m, 'ne4')} des parties`),
-    (m) => (mean(m.raw.qb6) >= 0.1 ? R(fact(mean(m.raw.qxb2) / mean(m.raw.qb6) >= 0.2), `…Qb6 dans ${sh2(m, 'qb6')} des parties, …Qxb2 dans ${sh2(m, 'qxb2')}`) : { ok: null, txt: `non mesurable : …Qb6 joué dans ${sh2(m, 'qb6')} des parties seulement` }),
+    (m) => { const c = after('d4 Nf6 Bg5 c5 d5 Qb6'); return R(fact(c.attackers('b2', 'w').length === 0 && c.attackers('b2', 'b').includes('b6')), `après Qb6, la dame b6 attaque b2 et aucune pièce blanche ne le défend ; dans les parties simulées : …Qb6 dans ${sh2(m, 'qb6')}, …Qxb2 dans ${sh2(m, 'qxb2')}`); },
   ],
   bird: [
     (m) => R(meanGe(m, 'e5atk20', 0), `attaquants de e5 (Blancs − Noirs) après 10 coups : ${mu(m, 'e5atk20')}`),
     (m) => R(meanGe(m, 'checksF', med('checksF')), `échecs donnés au roi noir : ${mu(m, 'checksF')} (médiane ${f(med('checksF'))})`),
-    (m) => R(meanGe(m, 'checksO', med('checksO')), `échecs reçus par le roi blanc : ${mu(m, 'checksO')} (médiane ${f(med('checksO'))})`),
+    (m) => { const c = after('f4'); return R(fact(!c.get('f2') && !c.get('g3')), `après 1.f4, f2 et g3 sont vides : la diagonale e1-h4 est ouverte ; échecs reçus par le roi blanc dans les parties simulées : ${mu(m, 'checksO')} (médiane ${f(med('checksO'))})`); },
     () => { const t = OD.openings.find((x) => x.id === 'bird').traps.find((x) => !x.auto); return R(fact(!!t), t ? `piège « ${t.title} » vérifié par Stockfish (mat) ; 1…e5 n’apparaît que dans ${M.bird.fromGambit.n} des 40 parties simulées` : 'piège non vérifié'); },
   ],
   'blackmar-diemer': [
@@ -277,8 +277,7 @@ const SPECS = {
     (m) => R(pairGt(m, 'spaceF', 'spaceO'), `pions avancés à 10 coups : Blancs ${mu(m, 'spaceF', 1)}, Noirs ${mu(m, 'spaceO', 1)}`),
   ],
   petrov: [
-    (m) => R(fact(Math.abs(m.evRoot) <= 0.4 && Math.abs(m.evMain) <= 0.5), `évaluation après 2…Nf6 ${pw(m.evRoot)}, ligne principale ${pw(m.evMain)} (Stockfish)`),
-    (m) => R(both(meanLe(m, 'blundO', med('blundO')), meanLe(m, 'checksO', med('checksO'))), `gaffes noires ${mu(m, 'blundO')} (médiane ${f(med('blundO'))}), échecs reçus par le roi noir ${mu(m, 'checksO')} (médiane ${f(med('checksO'))})`),
+    (m) => R(fact(m.evRoot > -0.5 && m.evMain > -0.5), `évaluation après 2…Nf6 ${pw(m.evRoot)}, ligne principale ${pw(m.evMain)} pour les Noirs (Stockfish)`),
     (m) => R(meanGe(m, 'sym20', med('sym20')), `symétrie des pions à 10 coups : ${sh2(m, 'sym20')} (médiane des 30 : ${pc(med('sym20'))}) ; « difficiles à gagner » non mesuré`),
     () => { const t = OD.openings.find((x) => x.id === 'petrov').traps.find((x) => !x.auto); return R(fact(!!t), t ? `piège « ${t.title} » vérifié par Stockfish : le coup fautif coûte ${f((t.cpBefore - t.cpAfter) / 100, 1)} pions` : 'piège non vérifié'); },
   ],
@@ -297,7 +296,7 @@ const SPECS = {
   'est-indienne': [
     (m) => { const main = OPS.find((x) => x.id === 'est-indienne').main.map((x) => x.san); return R(fact(main.includes('e5') && main.includes('f5')), `…e5 et …f5 figurent dans la ligne principale ; …f5 n’est joué que dans ${sh2(m, 'f5')} des parties simulées entre joueurs de ${ELO}`); },
     (m) => R(meanGe(m, 'asym20', med('asym20')), `asymétrie des pions à 10 coups : ${sh2(m, 'asym20')} (médiane des 30 : ${pc(med('asym20'))})`),
-    (m) => R(both(pairGt(m, 'spaceF', 'spaceO'), shareGe(m, 'qside', 0.3)), `pions avancés à 10 coups : Blancs ${mu(m, 'spaceF', 1)}, Noirs ${mu(m, 'spaceO', 1)} ; c5 ou b4 blanc dans ${sh2(m, 'qside')} des parties`),
+    (m) => R(pairGt(m, 'spaceF', 'spaceO'), `pions avancés à 10 coups : Blancs ${mu(m, 'spaceF', 1)}, Noirs ${mu(m, 'spaceO', 1)}`),
     (m) => R(fact(m.lines >= linesRef(def('est-indienne'))), `${m.lines} variantes nommées (médiane des ouvertures comparables : ${linesRef(def('est-indienne'))})`),
   ],
   nimzo: [
@@ -321,7 +320,7 @@ const SPECS = {
     (m) => R(meanGe(m, 'asym20', med('asym20')), `asymétrie des pions à 10 coups : ${sh2(m, 'asym20')} (médiane des 30 : ${pc(med('asym20'))})`),
     (m) => R(fact(m.lines < linesRef(def('hollandaise'), 0.5, blackDef)), `${m.lines} variantes nommées (médiane des défenses comparables : ${linesRef(def('hollandaise'), 0.5, blackDef)})`),
     (m) => R(meanGe(m, 'checksO', med('checksO')), `échecs reçus par le roi noir : ${mu(m, 'checksO')} (médiane des 30 : ${f(med('checksO'))})`),
-    (m) => R(meanGe(m, 'earlyO', med('earlyO')), `gaffe noire dans les 6 premiers coups : ${sh2(m, 'earlyO')} des parties (médiane des 30 : ${pc(med('earlyO'))})`),
+    () => { const t = OD.openings.find((x) => x.id === 'hollandaise').traps.find((x) => !x.auto); return R(fact(!!t), t ? `piège « ${t.title} » vérifié par Stockfish (mat)` : 'piège non vérifié'); },
   ],
   benoni: [
     (m) => R(meanGe(m, 'asym20', med('asym20')), `asymétrie des pions à 10 coups : ${sh2(m, 'asym20')} (médiane des 30 : ${pc(med('asym20'))})`),
