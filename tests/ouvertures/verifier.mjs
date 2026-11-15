@@ -10,7 +10,7 @@ const [simDir, opDir] = process.argv.slice(2);
 const L = (d, f) => JSON.parse(fs.readFileSync(path.join(d, f)));
 const merge = (d, re) => Object.assign({}, ...fs.readdirSync(d).filter((f) => re.test(f)).map((f) => L(d, f)));
 const G = merge(simDir, /^parties-\d+\.json$/); const EV = merge(simDir, /^evals-\d+\.json$/);
-const OPS = L(opDir, 'openings.json'); const MAIA = L(opDir, 'maia.json');
+const OPS = L(opDir, 'openings.json'); const ELO = +(process.env.ELO || 2000); const MAIA = L(opDir, 'maia.json');
 const OD = JSON.parse(fs.readFileSync(new URL('../../src/openings.json', import.meta.url)));
 const ENG = merge(opDir, /^moteur-\d+\.json$/);
 const key = (fen) => fen.split(' ').slice(0, 4).join(' ');
@@ -179,7 +179,7 @@ const SPECS = {
   ],
   viennoise: [
     (m) => R(both(shareGe(m, 'g3', 0.05), shareGe(m, 'f4', 0.05)), `g3 joué dans ${sh2(m, 'g3')} des parties, f4 dans ${sh2(m, 'f4')}`),
-    (m) => R(fact(m.rarity < 0.5), `probabilité que Maia 1500 joue 2.Nc3 : ${pc(m.rarity)}`),
+    (m) => R(fact(m.rarity < 0.5), `probabilité que Maia ${ELO} joue 2.Nc3 : ${pc(m.rarity)}`),
     (m) => (m.withF4.n >= 8 && m.withoutF4.n >= 8 ? R(fact(m.withF4.checksO > m.withoutF4.checksO), `échecs reçus avec f4 ${f(m.withF4.checksO)}, sans ${f(m.withoutF4.checksO)}`) : { ok: null, txt: `non mesurable : f4 joué dans ${m.withF4.n} parties seulement` }),
     (m) => engMain(m, (v) => v <= 0.5, 'évaluation de la ligne principale, qui contient …d5'),
   ],
@@ -190,7 +190,7 @@ const SPECS = {
     (m) => engMain(m, (v) => v <= 0.5),
   ],
   'gambit-dame': [
-    () => { const c = after('d4 d5 c4'); return R(fact(c.attackers('d5', 'w').includes('c4')), `après 2.c4, le pion c4 attaque d5 ; les Noirs y répondent par …e6, …c6 ou …dxc4 dans ${pc(['e7e6', 'c7c6', 'd5c4'].reduce((t, u) => t + ((MAIA[key(c.fen())] || []).find((x) => x[0] === u) || [0, 0])[1], 0))} des cas selon Maia 1500`); },
+    () => { const c = after('d4 d5 c4'); return R(fact(c.attackers('d5', 'w').includes('c4')), `après 2.c4, le pion c4 attaque d5 ; les Noirs y répondent par …e6, …c6 ou …dxc4 dans ${pc(['e7e6', 'c7c6', 'd5c4'].reduce((t, u) => t + ((MAIA[key(c.fen())] || []).find((x) => x[0] === u) || [0, 0])[1], 0))} des cas selon Maia ${ELO}`); },
     (m) => R(fact(m.evRoot >= -0.1), `évaluation après 2.c4 (Stockfish) : ${pw(m.evRoot)} ; « à tous les niveaux » non mesuré`),
     (m) => R(fact(m.lines >= linesRef(def('gambit-dame'), 0.75)), `${m.lines} variantes nommées (3e quartile des ouvertures comparables : ${linesRef(def('gambit-dame'), 0.75)})`),
     (m) => engMain(m, (v) => v <= 0.5),
@@ -225,7 +225,7 @@ const SPECS = {
     (m) => R(fact(m.evRoot < 0 && m.evRoot >= -0.5), `évaluation après 3.c3 (Stockfish, profondeur 18) : ${pw(m.evRoot)} ; ligne principale ${pw(m.evMain)}`),
   ],
   trompowsky: [
-    (m) => R(fact(m.lines <= linesRef(def('trompowsky'), 0.25) && m.rarity < 0.15), `${m.lines} variantes nommées (1er quartile des ouvertures comparables : ${linesRef(def('trompowsky'), 0.25)}) ; 2.Bg5 joué par Maia 1500 dans ${pc(m.rarity)} des cas`),
+    (m) => R(fact(m.lines <= linesRef(def('trompowsky'), 0.25) && m.rarity < 0.15), `${m.lines} variantes nommées (1er quartile des ouvertures comparables : ${linesRef(def('trompowsky'), 0.25)}) ; 2.Bg5 joué par Maia ${ELO} dans ${pc(m.rarity)} des cas`),
     (m) => R(meanGe(m, 'bxn10', med('bxn10')), `fous échangés contre des cavaliers (nombre de fous différent) après 5 coups : ${sh2(m, 'bxn10')} des parties (médiane des 30 : ${pc(med('bxn10'))})`),
     (m) => R(shareGe(m, 'ne4', 0.2), `…Ne4 suivi d’un coup du fou g5 dans ${sh2(m, 'ne4')} des parties`),
     (m) => (mean(m.raw.qb6) >= 0.1 ? R(fact(mean(m.raw.qxb2) / mean(m.raw.qb6) >= 0.2), `…Qb6 dans ${sh2(m, 'qb6')} des parties, …Qxb2 dans ${sh2(m, 'qxb2')}`) : { ok: null, txt: `non mesurable : …Qb6 joué dans ${sh2(m, 'qb6')} des parties seulement` }),
@@ -271,7 +271,7 @@ const SPECS = {
     (m) => R(both(pairGt(m, 'centralF6', 'centralO6'), shareGe(m, 'bh6', 0.2)), `pions centraux après 3 coups : Blancs ${mu(m, 'centralF6', 1)}, Noirs ${mu(m, 'centralO6', 1)} ; Bh6 dans ${sh2(m, 'bh6')} des parties, Qd2 et Be3 dans ${sh2(m, 'qd2be3')}`),
   ],
   alekhine: [
-    (m) => R(fact(m.rarity < 0.1), `1…Nf6 joué par Maia 1500 dans ${pc(m.rarity)} des cas ; « surprend » non mesuré`),
+    (m) => R(fact(m.rarity < 0.1), `1…Nf6 joué par Maia ${ELO} dans ${pc(m.rarity)} des cas ; « surprend » non mesuré`),
     (m) => R(shareGe(m, 'e5gone', 0.5), `pion blanc e5 échangé ou perdu après 10 coups dans ${sh2(m, 'e5gone')} des parties`),
     (m) => R(meanGe(m, 'g8moves', 2.5), `coups du cavalier g8 dans les 10 premiers coups noirs : ${mu(m, 'g8moves', 1)}`),
     (m) => R(pairGt(m, 'spaceF', 'spaceO'), `pions avancés à 10 coups : Blancs ${mu(m, 'spaceF', 1)}, Noirs ${mu(m, 'spaceO', 1)}`),
@@ -295,7 +295,7 @@ const SPECS = {
     (m) => R(fact(m.evRoot <= -0.3), `évaluation après 2…d6 (Stockfish) : ${pw(m.evRoot)} pour les Noirs`),
   ],
   'est-indienne': [
-    (m) => { const main = OPS.find((x) => x.id === 'est-indienne').main.map((x) => x.san); return R(fact(main.includes('e5') && main.includes('f5')), `…e5 et …f5 figurent dans la ligne principale ; …f5 n’est joué que dans ${sh2(m, 'f5')} des parties simulées entre joueurs de 1500`); },
+    (m) => { const main = OPS.find((x) => x.id === 'est-indienne').main.map((x) => x.san); return R(fact(main.includes('e5') && main.includes('f5')), `…e5 et …f5 figurent dans la ligne principale ; …f5 n’est joué que dans ${sh2(m, 'f5')} des parties simulées entre joueurs de ${ELO}`); },
     (m) => R(meanGe(m, 'asym20', med('asym20')), `asymétrie des pions à 10 coups : ${sh2(m, 'asym20')} (médiane des 30 : ${pc(med('asym20'))})`),
     (m) => R(both(pairGt(m, 'spaceF', 'spaceO'), shareGe(m, 'qside', 0.3)), `pions avancés à 10 coups : Blancs ${mu(m, 'spaceF', 1)}, Noirs ${mu(m, 'spaceO', 1)} ; c5 ou b4 blanc dans ${sh2(m, 'qside')} des parties`),
     (m) => R(fact(m.lines >= linesRef(def('est-indienne'))), `${m.lines} variantes nommées (médiane des ouvertures comparables : ${linesRef(def('est-indienne'))})`),
@@ -344,7 +344,7 @@ for (const o of OPENINGS) {
 fs.writeFileSync(path.join(simDir, 'verdicts.json'), JSON.stringify({ measures: M, verdicts: out }, null, 1));
 // Résumé pour l'appli : un verdict et une mesure par affirmation, dans l'ordre des textes.
 const code = { confirmé: 'ok', contredit: 'ko', 'non tranché': 'nt', 'non mesurable': 'nm' };
-const checks = { method: `${OPENINGS.length * 40} parties simulées (40 par ouverture) entre deux joueurs de 1500 (Maia), 15 coups chacun après les coups de départ ; coups évalués par Stockfish (profondeur 10). Verdict « non tranché » quand l’écart reste dans la marge d’erreur à 90 %.`, openings: {} };
+const checks = { method: `${OPENINGS.length * 40} parties simulées (40 par ouverture) entre deux joueurs de ${ELO} (Maia), 15 coups chacun après les coups de départ ; coups évalués par Stockfish (profondeur 10). Verdict « non tranché » quand l’écart reste dans la marge d’erreur à 90 %.`, openings: {} };
 for (const o of OPENINGS) { const v = out.filter((x) => x.id === o.id); checks.openings[o.id] = { forces: v.filter((x) => x.kind === 'force').map((x) => ({ v: code[x.verdict], d: x.detail })), faiblesses: v.filter((x) => x.kind === 'faiblesse').map((x) => ({ v: code[x.verdict], d: x.detail })) }; }
 fs.writeFileSync(new URL('../../src/openings-checks.json', import.meta.url), JSON.stringify(checks));
 for (const v of out) console.log(`${v.verdict === 'confirmé' ? 'OK ' : v.verdict === 'contredit' ? 'NON' : v.verdict === 'non tranché' ? '~~ ' : ' ? '} ${v.id.padEnd(15)} ${v.kind.padEnd(9)} ${v.text}\n      ${v.detail}`);

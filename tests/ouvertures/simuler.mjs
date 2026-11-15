@@ -2,10 +2,10 @@
 //   node tests/ouvertures/simuler.mjs parties <travail> [part] [parts]   (Chrome + Playwright, appli servie : BASE=…)
 //   node tests/ouvertures/simuler.mjs moteur  <travail> [part] [parts]
 //   node tests/ouvertures/simuler.mjs mesures <travail>
-// Parties : Maia 1500 contre Maia 1500 depuis les coups de départ, PLIES demi-coups, GAMES parties par ouverture.
+// Parties : Maia contre Maia au niveau ELO (2000 par défaut) depuis les coups de départ, PLIES demi-coups, GAMES parties par ouverture.
 import fs from 'fs'; import path from 'path'; import { Chess } from 'chess.js';
 import { OPENINGS } from '../../src/openings-def.js';
-import { engine } from './construire.mjs';
+import { engine, ELO } from './construire.mjs';
 
 export const GAMES = 40;
 export const PLIES = 30;
@@ -28,7 +28,7 @@ if (step === 'parties') {
     while (res[o.id].length < GAMES) {
       const c = new Chess(); const moves = rootOf(o); moves.forEach((u) => c.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] }));
       for (let k = 0; k < PLIES && !c.isGameOver(); k += 1) {
-        const u = await page.evaluate((fen) => window.__m.move(fen, 1500, 1500, 1), c.fen());
+        const u = await page.evaluate(([fen, elo]) => window.__m.move(fen, elo, elo, 1), [c.fen(), ELO]);
         c.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] }); moves.push(u);
       }
       res[o.id].push(moves);

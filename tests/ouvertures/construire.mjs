@@ -1,5 +1,5 @@
 // Construit src/openings.json à partir des définitions, de la base de noms Lichess (domaine public, CC0),
-// de Maia 1500 (popularité des coups chez des joueurs de club) et de Stockfish (qualité des coups).
+// de Maia au niveau ELO (2000 par défaut ; popularité des coups chez des joueurs de club) et de Stockfish (qualité des coups).
 //
 // Usage, dans l'ordre (dossier de travail au choix, par exemple /tmp/ouv) :
 //   node tests/ouvertures/construire.mjs noeuds    <travail> <dossier des .tsv de github.com/lichess-org/chess-openings>
@@ -22,8 +22,9 @@ const save = (f, v) => fs.writeFileSync(W(f), JSON.stringify(v));
 
 export const key = (fen) => fen.split(' ').slice(0, 4).join(' ');
 const uciOf = (m) => m.from + m.to + (m.promotion || '');
+export const ELO = +(process.env.ELO || 2000); // niveau des joueurs simulés par Maia
 const BOOK_PLIES = 16; // profondeur des variantes retenues après les coups de départ
-const TRAP_MIN_POP = 0.1; // un coup « naturel » : Maia 1500 le joue au moins une fois sur dix
+const TRAP_MIN_POP = 0.1; // un coup « naturel » : Maia (niveau ELO) le joue au moins une fois sur dix
 const TRAP_MIN_LOSS = 200; // un piège coûte au moins deux pions
 const MAIN_MAX_LOSS = 60; // la ligne principale ne contient aucun coup perdant plus de 0,6 pion
 
@@ -68,7 +69,7 @@ if (step === 'noeuds') {
   console.log(nodes.size, 'positions à évaluer');
 }
 
-/* ---------- 2. Maia 1500 : probabilité de chaque coup dans chaque position ---------- */
+/* ---------- 2. Maia (niveau ELO) : probabilité de chaque coup dans chaque position ---------- */
 if (step === 'maia') {
   const { open } = await import('../navigateur/outils.mjs');
   const nodes = load('nodes.json');
@@ -78,9 +79,9 @@ if (step === 'maia') {
   await page.evaluate(async () => { window.__m = await import(new URL('maia/maia.mjs', location.href).href); await window.__m.load(new URL('maia/', location.href).href); });
   const todo = nodes.filter((n) => !res[key(n.fen)]);
   for (let i = 0; i < todo.length; i += 50) {
-    const got = await page.evaluate(async (chunk) => {
-      const o = []; for (const n of chunk) { const mv = await window.__m.policy(n.fen, 1500, 1500, n.prior); o.push(mv.filter((x) => x[1] >= 0.005).sort((a, b) => b[1] - a[1]).map((x) => [x[0], +x[1].toFixed(4)])); } return o;
-    }, todo.slice(i, i + 50));
+    const got = await page.evaluate(async ([chunk, elo]) => {
+      const o = []; for (const n of chunk) { const mv = await window.__m.policy(n.fen, elo, elo, n.prior); o.push(mv.filter((x) => x[1] >= 0.005).sort((a, b) => b[1] - a[1]).map((x) => [x[0], +x[1].toFixed(4)])); } return o;
+    }, [todo.slice(i, i + 50), ELO]);
     got.forEach((g, j) => { res[key(todo[i + j].fen)] = g; });
     save('maia.json', res);
     if ((i / 50) % 10 === 0) console.log(Object.keys(res).length, '/', nodes.length);
@@ -141,7 +142,7 @@ if (step === 'moteur') {
       }
     }
   }
-  // e) pièges trouvés automatiquement : dans chaque position des variantes, un coup que Maia 1500 joue souvent mais qui perd beaucoup
+  // e) pièges trouvés automatiquement : dans chaque position des variantes, un coup que Maia joue souvent mais qui perd beaucoup
   const seen = new Set();
   for (const o of ops) {
     const lines = [...o.lines.map((l) => l.moves), o.main.map((m) => m.uci)];
@@ -168,7 +169,7 @@ if (step === 'confirmer') {
   const nodes = new Map(load('nodes.json').map((n) => [key(n.fen), n.fen]));
   const done = Object.assign({}, ...fs.readdirSync(work).filter((f) => /^confirmes.*\.json$/.test(f)).map((f) => load(f)));
   const outF = `confirmes-${part}.json`; const res = fs.existsSync(W(outF)) ? load(outF) : {};
-  // Candidats : position équilibrée, coup joué souvent par Maia 1500, perte d'au moins deux pions à profondeur 12.
+  // Candidats : position équilibrée, coup joué souvent par Maia, perte d'au moins deux pions à profondeur 12.
   // Les plus probables d'abord, pour que les pièges les plus utiles soient confirmés en premier.
   const cand = [];
   for (const [id, v] of Object.entries(E)) {
@@ -234,7 +235,7 @@ if (step === 'assembler') {
     // Pièges trouvés automatiquement dans les variantes de cette ouverture
     const paths = new Map(); // clé → coups depuis le début
     for (const l of [...o.lines.map((x) => x.moves), mainUci]) { const c = new Chess(); for (let i = 0; i < Math.min(l.length, n + BOOK_PLIES); i += 1) { const kk = key(c.fen()); if (i >= n && !paths.has(kk)) paths.set(kk, l.slice(0, i)); c.move({ from: l[i].slice(0, 2), to: l[i].slice(2, 4), promotion: l[i][4] }); } }
-    const autos = Object.values(C).filter((t) => paths.has(key(t.fen)) && t.bestCp - t.cp >= TRAP_MIN_LOSS && Math.abs(t.bestCp) <= 250)
+    const autos = Object.values(C).map((t) => ({ ...t, pop: pop(key(t.fen), t.bait) })).filter((t) => paths.has(key(t.fen)) && t.pop >= TRAP_MIN_POP && t.bestCp - t.cp >= TRAP_MIN_LOSS && Math.abs(t.bestCp) <= 250)
       .filter((t) => !traps.some((x) => key(new Chess(t.fen).fen()) === key((() => { const c = new Chess(); x.moves.slice(0, x.bait).forEach((u) => c.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] })); return c.fen(); })()) && x.moves[x.bait] === t.bait))
       .sort((a, b) => b.pop * Math.min(600, b.bestCp - b.cp) - a.pop * Math.min(600, a.bestCp - a.cp)).slice(0, 3);
     for (const t of autos) {
@@ -245,7 +246,7 @@ if (step === 'assembler') {
       // Le texte ne dit que ce que le moteur a vérifié : la perte chiffrée et la suite la plus forte.
       const baitSan = sanOf(t.fen, t.bait); const bestSan = sanOf(t.fen, t.best);
       const lossTxt = t.mate != null || t.cp < -5000 ? 'mène au mat' : `perd environ ${Math.round((t.bestCp - t.cp) / 100)} pions selon Stockfish`;
-      const text = `${victim === 'w' ? 'Les Blancs' : 'Les Noirs'} jouent souvent ${baitSan} ici (environ ${Math.round(t.pop * 100)} % des joueurs de 1500 selon Maia), mais ce coup ${lossTxt}. Suite la plus forte pour les ${victim === 'w' ? 'Noirs' : 'Blancs'} : ${numbered(after.fen(), refOk)}. Meilleur coup : ${bestSan}.`;
+      const text = `${victim === 'w' ? 'Les Blancs' : 'Les Noirs'} jouent souvent ${baitSan} ici (environ ${Math.round(t.pop * 100)} % des joueurs de ${ELO} selon Maia), mais ce coup ${lossTxt}. Suite la plus forte pour les ${victim === 'w' ? 'Noirs' : 'Blancs'} : ${numbered(after.fen(), refOk)}. Meilleur coup : ${bestSan}.`;
       traps.push({ title: `Le coup ${baitSan} ?`, text, victim, moves: [...path0, t.bait, ...refOk], bait: path0.length, pop: t.pop, cpBefore: t.bestCp, cpAfter: t.cp, auto: true, ok: true });
     }
     // Variantes nommées les plus probables (produit des probabilités Maia depuis les coups de départ)
@@ -254,7 +255,7 @@ if (step === 'assembler') {
     for (const v of scored.sort((a, b) => b.p - a.p)) { const base = v.name; if (seenName.has(base) || v.moves.length > n + BOOK_PLIES) continue; seenName.add(base); variations.push({ name: v.name, moves: v.moves }); if (variations.length >= 8) break; }
     out.push({ id: o.id, name: def.name, side: def.side, root: rootUci, main: mainUci, idea: def.idea, forces: def.forces, faiblesses: def.faiblesses, against: def.against, with: def.with, best, replies, traps: traps.filter((t) => t.ok).map(({ ok, ...t }) => t), variations });
   }
-  const data = { source: 'Noms : github.com/lichess-org/chess-openings (CC0). Popularité : Maia-3 à 1500 Elo. Évaluations : Stockfish 18 (profondeur 16 à 18).', openings: out, book: Object.fromEntries(Object.entries(book).map(([k, v]) => [k, Object.entries(v).map(([u, w]) => [u, +w.toFixed(3)])])), names: usedNames };
+  const data = { elo: ELO, source: `Noms : github.com/lichess-org/chess-openings (CC0). Popularité : Maia-3 à ${ELO} Elo. Évaluations : Stockfish 18 (profondeur 16 à 18).`, openings: out, book: Object.fromEntries(Object.entries(book).map(([k, v]) => [k, Object.entries(v).map(([u, w]) => [u, +w.toFixed(3)])])), names: usedNames };
   fs.writeFileSync(path.join(root, 'src/openings.json'), JSON.stringify(data));
   console.log(report.length ? `À CORRIGER :\n  ${report.join('\n  ')}` : 'Aucun problème');
   console.log(`src/openings.json : ${Math.round(fs.statSync(path.join(root, 'src/openings.json')).size / 1000)} Ko ; pièges : ${out.map((o) => `${o.id} ${o.traps.length}`).join(', ')}`);
