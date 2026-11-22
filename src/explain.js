@@ -534,13 +534,8 @@ function reasonsFor(ctx) {
     const byMove = k === 0 || (k === 1 && steps[1].m.captured && steps[1].m.to === m.to) || (k >= 2 && steps[k].m.color === mover && steps[k].m.from === m.to);
     if (sq && byMove) out.push(k === 0 ? `ça crée un pion passé en ${tok(sq)}` : `après ${steps.slice(1, k + 1).map((s) => tok(s.m.san)).join(' ')}, ${side(mover)} ont un pion passé en ${tok(sq)}`);
   }
-  if (sound && countType(fenBefore, foe, 'b') === 2 && countType(end, foe, 'b') === 1 && countType(end, mover, 'b') === 2 && !recapture) {
-    const bxn = steps.slice(1, 4).find((s) => s.m.color === foe && s.m.piece === 'b' && s.m.captured === 'n');
-    const chased = bxn && !m.captured && targets(first.fen, m.to).some((t) => t.square === bxn.m.from);
-    out.push(!bxn ? `${side(mover)} gardent seuls la paire de fous`
-      : chased ? `ça attaque ${the('b', foe)} en ${tok(bxn.m.from)} : s’il prend le cavalier en ${tok(bxn.m.to)}, ${side(mover)} auront seuls la paire de fous`
-        : `si ${the('b', foe)} prend le cavalier en ${tok(bxn.m.to)}, ${side(mover)} auront seuls la paire de fous`);
-  }
+  // (La paire de fous n'est plus donnée comme raison d'un coup : remarque de structure, rarement la vraie raison.)
+
   if (m.captured && !recapture && materialFor(fenBefore, mover) >= 2 && !ex.net) out.push('avec du matériel en plus, chaque échange rapproche de la victoire');
 
   if (m.san.startsWith('O-O')) out.push('ça met le roi à l’abri et rapproche la tour du jeu');
