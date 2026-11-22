@@ -587,21 +587,31 @@ export function isSacrifice(m) {
 export function bookFromEcoUrl(url, plies) {
   const slug = (url || '').split('/').pop();
   if (!slug) return { plies: 0, name: '' };
-  const parts = slug.split('-');
-  const firstNum = parts.findIndex((p) => /^\d+\.+/.test(p));
+  // « Nom-De-L-Ouverture...3.Bf4-Nf6-4.e3 » : le nom, puis les coups (les « ... » séparent parfois le nom des coups).
+  const parts = slug.replace(/\.\.\.(?=\d)/g, '-').split('-');
+  const isNum = (p) => /^\d+\.+./.test(p);
+  const firstNum = parts.findIndex(isNum);
   const name = (firstNum < 0 ? parts : parts.slice(0, firstNum)).join(' ');
   let last = -1;
-  parts.forEach((p, i) => { if (/^\d+\.+/.test(p)) last = i; });
+  parts.forEach((p, i) => { if (isNum(p)) last = i; });
   if (last < 0) return { plies: 0, name };
   const m = parts[last].match(/^(\d+)(\.+)(.+)$/);
-  let ply = (+m[1] - 1) * 2 + (m[2].length > 1 ? 2 : 1);
-  const clean = (s) => s.replace(/[+#]$/, '');
-  if (!plies[ply - 1] || clean(plies[ply - 1].san) !== clean(m[3])) return { plies: 0, name };
-  const tail = parts.slice(last + 1);
-  for (const t of tail) {
-    if (plies[ply] && clean(plies[ply].san) === clean(t)) ply += 1; else break;
+  const start = (+m[1] - 1) * 2 + (m[2].length > 1 ? 1 : 0);
+  // Les coups suivants, comparés à la partie. Le roque contient des tirets (« 5.O-O-O-O » = 5.O-O O-O) :
+  // les « O » sont regroupés selon le roque réellement joué.
+  const seq = [m[3], ...parts.slice(last + 1)];
+  const clean = (x) => x.replace(/[+#]$/, '');
+  let k = start; let j = 0;
+  while (j < seq.length && plies[k]) {
+    const san = clean(plies[k].san);
+    if (seq[j] === 'O') {
+      let run = 0; while (seq[j + run] === 'O') run += 1;
+      const need = san === 'O-O-O' ? 3 : san === 'O-O' ? 2 : 0;
+      if (!need || run < need) break;
+      j += need; k += 1;
+    } else if (clean(seq[j]) === san) { j += 1; k += 1; } else break;
   }
-  return { plies: ply, name };
+  return { plies: k > start ? k : 0, name };
 }
 
 const sentence = (t) => `${t[0].toUpperCase()}${t.slice(1)}.`;

@@ -22,7 +22,18 @@ Il est chargé via [maia3-js](https://www.npmjs.com/package/maia3-js) (MIT) et o
 
 Polices Young Serif, Instrument Sans et JetBrains Mono (SIL Open Font License 1.1), servies depuis `docs/fonts/` via Fontsource.
 
+Coups de théorie : [ouvertures nommées de Lichess](https://github.com/lichess-org/chess-openings) (CC0).
+
 Problèmes : [base de problèmes Lichess](https://database.lichess.org/) (CC0), lue via le jeu de données public Hugging Face `Lichess/chess-puzzles`.
+
+## Coups de théorie
+
+Un coup est « de théorie » d'après deux sources, la plus longue l'emporte :
+
+- le lien d'ouverture que Chess.com joint à la partie (`ECOUrl`), lu jusqu'au dernier coup qui correspond à la partie (roques compris) ;
+- la base des ouvertures nommées de Lichess (3 865 lignes, 7 982 positions, `data/lichess-openings/`, domaine public), par position : un autre ordre de coups compte, jusqu'à la dernière position de la base atteinte dans les 40 premiers demi-coups. `src/book.json` est construit par `node tests/ouvertures/livre.mjs`.
+
+La théorie s'arrête au premier coup que le moteur juge imprécis ou pire : une ligne nommée peut être perdante (le mat du lion en fait partie). Sur 202 parties rapides récentes de roipionnier, 43 n'avaient aucun coup de théorie avec le seul lien Chess.com (lien sans coups, roque dans le lien, autre ordre de coups) ; aucune avec les deux sources. Contrôles : `tests/livre.mjs`.
 
 ## Tests des commentaires
 

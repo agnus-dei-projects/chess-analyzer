@@ -6,6 +6,7 @@ import {
 import { Engine, POOL_SIZE } from './engine.js';
 import { createTrainer } from './exercises.js';
 import { createFx } from './fx.js';
+import { bookPliesByPosition } from './book.js';
 import { bookFromEcoUrl, enPrise, explainMove, isSacrifice, sanToSpeech, walk } from './explain.js';
 
 const API = 'https://api.chess.com/pub/player/';
@@ -48,8 +49,11 @@ function parseGame(pgn) {
   const tag = (name) => (pgn.match(new RegExp(`\\[${name} "([^"]*)"\\]`)) || [])[1] || '';
   const book = bookFromEcoUrl(tag('ECOUrl'), plies);
   plies.forEach((p) => { p.opening = book.name; });
+  // Théorie : le lien d'ouverture de Chess.com, ou la base Lichess par position (ordres de coups différents,
+  // lien absent ou sans coups) ; on garde la plus longue des deux.
+  const bookPlies = Math.max(book.plies, bookPliesByPosition(fens));
   return {
-    fens, plies, bookPlies: book.plies, result: tag('Result'),
+    fens, plies, bookPlies, result: tag('Result'),
     white: tag('White') || 'Blancs', black: tag('Black') || 'Noirs',
     whiteElo: tag('WhiteElo'), blackElo: tag('BlackElo'),
     finalCheckmate: chess.isCheckmate(), finalDrawn: chess.isStalemate() || chess.isInsufficientMaterial(),
@@ -751,7 +755,8 @@ async function analyze(game, key) {
     if (me.cancelled) return;
     $('progress-text').textContent = 'Recherche des raisons de chaque coup…';
     const todo = [];
-    for (let i = game.bookPlies; i < game.plies.length; i += 1) if (game.plies[i].legal >= 2) todo.push(i);
+    // (aussi sur les coups de théorie : un coup imprécis y met fin et doit alors être expliqué)
+    for (let i = 0; i < game.plies.length; i += 1) if (game.plies[i].legal >= 2) todo.push(i);
     await share(engines, todo, 4, me, (engine, i) => computeThreat(engine, game.fens[i], state.evals[i]));
     if (me.cancelled) return;
     cache.set(cacheKey, state.evals);

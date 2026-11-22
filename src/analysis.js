@@ -91,6 +91,8 @@ function special(base, ply, m, secondPct, prevKind) {
  */
 export function buildReport(plies, evals, bookPlies = 0) {
   const moves = [];
+  // La théorie s'arrête au premier coup que le moteur juge imprécis ou pire (une ligne nommée peut être perdante).
+  let bookEnd = bookPlies;
   plies.forEach((ply, i) => {
     moves.push(judge(ply, i));
   });
@@ -118,7 +120,8 @@ export function buildReport(plies, evals, bookPlies = 0) {
       accuracy: moveAccuracy(moverBefore, moverAfter),
     };
     const prev = moves[i - 1];
-    m.kind = i < bookPlies ? 'book' : special(base, ply, m, secondPct, prev && !prev.pending ? prev.kind : null);
+    if (i < bookEnd && loss >= THRESHOLDS.good) bookEnd = i;
+    m.kind = i < bookEnd ? 'book' : special(base, ply, m, secondPct, prev && !prev.pending ? prev.kind : null);
     return m;
   }
 
