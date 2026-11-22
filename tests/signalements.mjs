@@ -20,7 +20,7 @@ for (const { id, data: r } of items) {
   const prev = r.prev ? (typeof r.prev === 'string' ? { uci: r.prev, to: r.prev.slice(2, 4), captured: null } : r.prev) : null;
   const ply = { san: m.san, color: m.color, from: m.from, to: m.to, uci: r.uci, legal, captured: m.captured, piece: m.piece, sacrifice: X.isSacrifice(m), recapture: !!(prev && m.captured && prev.captured && prev.to === m.to) };
   const move = A.buildReport([ply], [r.avant, r.apres], 0).moves[0];
-  const ex = X.explainMove({ fenBefore: r.fen, fenAfter: c.fen(), ply, before: r.avant, after: r.apres, move, index: 20, prev, avoid: null });
+  const ex = X.explainMove({ fenBefore: r.fen, fenAfter: c.fen(), ply, before: r.avant, after: r.apres, move, index: (+r.fen.split(' ')[5] - 1) * 2 + (r.fen.split(' ')[1] === 'b' ? 1 : 0), prev, avoid: null });
   const f = (s) => (s.type === 'mate' ? '#' + s.value : (s.value / 100).toFixed(1));
   console.log(`\n== ${id} : ${r.coup} [appli : ${r.classement} ; ici : ${move.kind}] ${f(r.avant.score)}→${f(r.apres.score)}\n   meilleur : ${X.walk(r.fen, r.avant.pv).slice(0, 8).map((s) => s.m.san).join(' ')}\n   joué     : ${m.san} ${X.walk(c.fen(), r.apres.pv || []).slice(0, 7).map((s) => s.m.san).join(' ')}\n   Dans l'appli : ${r.commentaire}\n   Maintenant   : ${plain(ex)}\n   cas : ${JSON.stringify({ name: r.coup, fen: r.fen, uci: r.uci, prev, must: [], mustNot: [] })}`);
 }

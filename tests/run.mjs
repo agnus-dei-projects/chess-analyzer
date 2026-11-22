@@ -36,7 +36,7 @@ export async function analyse(fen, uci, prev = null) {
   const ply = { san: m.san, color: m.color, from: m.from, to: m.to, uci, legal, captured: m.captured, piece: m.piece, sacrifice: X.isSacrifice(m), recapture: false };
   const move = A.buildReport([ply], [before, after], 0).moves[0];
   if (prev && m.captured && prev.captured && prev.to === m.to) ply.recapture = true;
-  const ex = X.explainMove({ fenBefore: fen, fenAfter, ply, before, after, move, index: 20, prev, avoid: null });
+  const ex = X.explainMove({ fenBefore: fen, fenAfter, ply, before, after, move, index: (+fen.split(' ')[5] - 1) * 2 + (fen.split(' ')[1] === 'b' ? 1 : 0), prev, avoid: null });
   return { ex, move, before, after, ply, fenAfter };
 }
 let bad = 0;

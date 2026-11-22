@@ -154,5 +154,159 @@
   "mustNot": [
    "paire de fous"
   ]
+ },
+ {
+  "name": "5…a6 — paire de fous donnée par …a6 — dire qui l'obtient",
+  "fen": "r1bqkbnr/pp2pppp/2n5/1B1p4/8/3P1N2/PPP2PPP/RNBQK2R b KQkq - 0 5",
+  "uci": "a7a6",
+  "prev": {
+   "uci": "d2d3",
+   "to": "d3",
+   "captured": null
+  },
+  "must": [],
+  "mustNot": [
+   "Ça donne la paire de fous",
+   "Légèrement mieux"
+  ]
+ },
+ {
+  "name": "5…a6 — …a6 (bon coup) — paire de fous expliquée",
+  "fen": "r1bqkbnr/pp2pppp/2n5/1B1p4/8/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 5",
+  "uci": "a7a6",
+  "prev": {
+   "uci": "g1f3",
+   "to": "f3",
+   "captured": null
+  },
+  "must": [
+   "paire de fous"
+  ],
+  "mustNot": [
+   "Ça donne la paire de fous"
+  ]
+ },
+ {
+  "name": "13…Bc5 — …Bc5 cloue la tour f2 — pas « gagne un pion » seul",
+  "fen": "r3kb1r/5ppp/p1q2n2/3pp2b/8/2NP1P2/PPP2RPP/R1BQ2K1 b kq - 0 13",
+  "uci": "f8c5",
+  "prev": {
+   "uci": "d2d3",
+   "to": "d3",
+   "captured": null
+  },
+  "must": [
+   "cloue"
+  ],
+  "mustNot": [
+   "^Ça gagne un pion"
+  ]
+ },
+ {
+  "name": "14…Bxf2+ — …Bxf2+ gagne la qualité — pas « force le roi »",
+  "fen": "r3k2r/5ppp/p1q2n2/2bpp2b/8/2NP1P2/PPP1QRPP/R1B3K1 b kq - 2 14",
+  "uci": "c5f2",
+  "prev": {
+   "uci": "d1e2",
+   "to": "e2",
+   "captured": null
+  },
+  "must": [
+   "tour contre un fou"
+  ],
+  "mustNot": [
+   "force le roi",
+   "Légèrement mieux"
+  ]
+ },
+ {
+  "name": "16.Bg5 — Bg5 — l'idée n'est pas de revenir en d2",
+  "fen": "r4rk1/5ppp/p1q2n2/3pp2b/8/2NP1P2/PPP2QPP/R1B3K1 w - - 1 16",
+  "uci": "c1g5",
+  "prev": {
+   "uci": "e8g8",
+   "to": "g8",
+   "captured": null
+  },
+  "must": [],
+  "mustNot": [
+   "continuer par \\[\\[Bd2\\]\\]"
+  ]
+ },
+ {
+  "name": "32…Qxe4+ — …Qxe4+ position gagnante — échange des dames",
+  "fen": "6k1/5pp1/p1P3bp/4Q3/3pP1K1/3q2P1/7P/6r1 b - - 0 32",
+  "uci": "d3e4",
+  "prev": {
+   "uci": "c5c6",
+   "to": "c6",
+   "captured": null
+  },
+  "must": [],
+  "mustNot": [
+   "force le roi",
+   "Légèrement mieux"
+  ]
+ },
+ {
+  "name": "13.Bxd6+ — Bxd6+ — reprises en d5 avec la couleur de chaque pièce",
+  "fen": "r5nr/p3kppp/2Bbp3/q2p4/3P1B2/2N5/PPP2PPP/R2R2K1 w - - 1 13",
+  "uci": "f4d6",
+  "prev": {
+   "uci": "e8e7",
+   "to": "e7",
+   "captured": null
+  },
+  "must": [],
+  "mustNot": [
+   "le pion reprend",
+   "le fou reprend",
+   "la dame prend,"
+  ]
+ },
+ {
+  "name": "14.Bxa8 — Bxa8 gagne la tour — pas « pion passé »",
+  "fen": "r5nr/p4ppp/2Bkp3/q2p4/3P4/2N5/PPP2PPP/R2R2K1 w - - 0 14",
+  "uci": "c6a8",
+  "prev": {
+   "uci": "e7d6",
+   "to": "d6",
+   "captured": "b"
+  },
+  "must": [
+   "gagne"
+  ],
+  "mustNot": [
+   "pion passé"
+  ]
+ },
+ {
+  "name": "11.Nf3 — Nf3 — paire de fous : qui et comment",
+  "fen": "r2qkb1r/pp1n1ppp/2p1p3/2Pp4/1P1PbB2/P3P2P/5PP1/R2QKBNR w KQkq - 0 11",
+  "uci": "g1f3",
+  "prev": {
+   "uci": "f5e4",
+   "to": "e4",
+   "captured": "n"
+  },
+  "must": [],
+  "mustNot": [
+   "Ça donne la paire de fous"
+  ]
+ },
+ {
+  "name": "17.b5 — b5 — pion passé situé, pas de « légèrement mieux » pour 8 cp",
+  "fen": "r2q1rk1/pp2bppp/2p1pn2/2Pp4/PP1P1B2/3QP2P/3N1PP1/R4RK1 w - - 1 17",
+  "uci": "b4b5",
+  "prev": {
+   "uci": "e8g8",
+   "to": "g8",
+   "captured": null
+  },
+  "must": [],
+  "mustNot": [
+   "^Ça crée un pion passé\\.",
+   "Légèrement mieux"
+  ]
  }
 ]

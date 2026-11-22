@@ -6,7 +6,7 @@
 import fs from 'fs'; import path from 'path'; import { X, A, here, plain } from './lib.mjs';
 const dir = path.join(here, 'corpus'); const S = JSON.parse(fs.readFileSync(path.join(dir, 'states.json')));
 const accept = process.argv.includes('--accept');
-const WEAK = /double les pions|paire de fous|pion passé|pion isolé|plus de cases|gagne de l’espace|force le roi adverse|à l’abri|sort une pièce|prend de la place/;
+const WEAK = /double les pions|paire de fous|pion passé|pion isolé|plus de cases|gagne de l’espace|donne échec$|force le roi adverse|à l’abri|sort une pièce|prend de la place/;
 const now = {}; const broken = []; let n = 0; let ms = 0;
 const fail = (key, rule, text) => broken.push(`${key} — ${rule}\n      ${text.slice(0, 260)}`);
 S.forEach((g, gi) => {

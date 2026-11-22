@@ -344,8 +344,8 @@ export function pawnStats(fen, color) {
   const passed = mine.filter((p) => {
     const f = fileIdx(p.square); const r = +p.square[1];
     return !theirs.some((t) => Math.abs(fileIdx(t.square) - f) <= 1 && (color === 'w' ? +t.square[1] > r : +t.square[1] < r));
-  }).length;
-  return { doubled, isolated, passed };
+  });
+  return { doubled, isolated, passed: passed.length, passedSq: passed.map((p) => p.square) };
 }
 
 export function kingShield(fen, color) {
@@ -479,8 +479,17 @@ function reasonsFor(ctx) {
   if (ex.net > 0 && listPieces(ex.won) && (cp >= ex.net * 50 || (ex.net >= 2 && realGain >= ex.net && cp > -1e4)) && realGain >= 1 && !unpin && !dbl) {
     const lost = listPieces(ex.lost);
     out.push(`ça gagne ${listPieces(ex.won)}${lost ? ` contre ${lost}` : ''}`);
+  } else if (m.captured && !recapture && V[m.captured] >= 3 && ex.net >= 2 && realGain >= 2 && cp > -1e4 && !unpin && !dbl) {
+    // La pièce prise reste acquise, mais la suite du moteur en rend une partie : on dit ce qui reste.
+    out.push(`ça gagne ${the(m.captured, foe)} en ${tok(m.to)} : même si la suite du moteur en rend une partie, ${side(mover)} gardent ${pts(realGain)} de matériel en plus`);
   }
   if (m.promotion) out.push('ça donne une nouvelle dame');
+  // Simplification : les deux dames disparaissent dans la suite et la finale reste gagnante.
+  {
+    const endQ = steps[Math.min(steps.length, 6) - 1];
+    const queenMove = m.piece === 'q' || m.captured === 'q';
+    if (queenMove && !recapture && cp >= 300 && materialFor(fenBefore, mover) >= 2 && countType(fenBefore, mover, 'q') && countType(fenBefore, foe, 'q') && endQ && !countType(endQ.fen, mover, 'q') && !countType(endQ.fen, foe, 'q')) out.push('ça mène à l’échange des dames avec du matériel en plus : la position reste gagnante selon le moteur');
+  }
 
   // Défenseur retiré.
   if (m.captured && !recapture) {
@@ -496,7 +505,13 @@ function reasonsFor(ctx) {
   else if (!taken && realGain >= 1) {
     const pin = pinBy(first.fen, m.to);
     // (pas un clouage si la pièce « clouée » bouge au coup suivant dans la suite du moteur)
-    if (pin && !(steps[1] && steps[1].m.from === pin.pinned.square)) out.push(`ça cloue ${the(pin.pinned.type, foe)} en ${tok(pin.pinned.square)} devant ${the(pin.behind.type, foe)} en ${tok(pin.behind.square)}`);
+    if (pin && !(steps[1] && steps[1].m.from === pin.pinned.square)) {
+      const pinTxt = `ça cloue ${the(pin.pinned.type, foe)} en ${tok(pin.pinned.square)} devant ${the(pin.behind.type, foe)} en ${tok(pin.behind.square)}`;
+      // Le gain annoncé n'est que ce que l'adversaire rend pour sauver la pièce clouée : le clouage est la vraie raison.
+      const g = out.findIndex((t) => /^ça gagne /.test(t));
+      if (g >= 0 && V[pin.pinned.type] > ex.net && !ex.won[pin.pinned.type]) out.splice(g, 1, `${pinTxt} : pour ne pas ${FEM[pin.pinned.type] ? 'la' : 'le'} perdre, ${side(foe)} doivent rendre ${listPieces(ex.won)}`);
+      else out.push(pinTxt);
+    }
   }
   const t = threatFragment(first, threat, mover, score, steps[1], fenBefore);
   if (t) out.push(t);
@@ -512,8 +527,20 @@ function reasonsFor(ctx) {
   const sound = realGain >= 0;
   if (sound && sh0 != null && sh1 != null && sh1 < sh0 && pawnTaken && kingStill(fenBefore) === kingStill(end)) out.push(`ça affaiblit les pions devant ${the('k', foe)}`);
   if (sound && m.captured && steps[1] && steps[1].m.piece === 'p' && steps[1].m.to === m.to && foe1.doubled > foe0.doubled) out.push('ça double les pions adverses');
-  if (sound && me1.passed > me0.passed) out.push('ça crée un pion passé');
-  if (sound && countType(fenBefore, foe, 'b') === 2 && countType(end, foe, 'b') === 1 && countType(end, mover, 'b') === 2 && !recapture) out.push('ça donne la paire de fous');
+  if (sound && me1.passed > me0.passed) {
+    const k = steps.slice(0, 4).findIndex((s) => pawnStats(s.fen, mover).passed > me0.passed);
+    const adv = (x) => (mover === 'w' ? -x[1] : +x[1]);
+    const sq = k < 0 ? null : pawnStats(steps[k].fen, mover).passedSq.filter((x) => !me0.passedSq.includes(x)).sort((a, b) => adv(a) - adv(b))[0];
+    const byMove = k === 0 || (k === 1 && steps[1].m.captured && steps[1].m.to === m.to) || (k >= 2 && steps[k].m.color === mover && steps[k].m.from === m.to);
+    if (sq && byMove) out.push(k === 0 ? `ça crée un pion passé en ${tok(sq)}` : `après ${steps.slice(1, k + 1).map((s) => tok(s.m.san)).join(' ')}, ${side(mover)} ont un pion passé en ${tok(sq)}`);
+  }
+  if (sound && countType(fenBefore, foe, 'b') === 2 && countType(end, foe, 'b') === 1 && countType(end, mover, 'b') === 2 && !recapture) {
+    const bxn = steps.slice(1, 4).find((s) => s.m.color === foe && s.m.piece === 'b' && s.m.captured === 'n');
+    const chased = bxn && !m.captured && targets(first.fen, m.to).some((t) => t.square === bxn.m.from);
+    out.push(!bxn ? `${side(mover)} gardent seuls la paire de fous`
+      : chased ? `ça attaque ${the('b', foe)} en ${tok(bxn.m.from)} : s’il prend le cavalier en ${tok(bxn.m.to)}, ${side(mover)} auront seuls la paire de fous`
+        : `si ${the('b', foe)} prend le cavalier en ${tok(bxn.m.to)}, ${side(mover)} auront seuls la paire de fous`);
+  }
   if (m.captured && !recapture && materialFor(fenBefore, mover) >= 2 && !ex.net) out.push('avec du matériel en plus, chaque échange rapproche de la victoire');
 
   if (m.san.startsWith('O-O')) out.push('ça met le roi à l’abri et rapproche la tour du jeu');
@@ -616,7 +643,6 @@ function purposes({ fenBefore, steps, mover, prev }) {
     const hit = targets(first.fen, m.to).filter((t) => t.type !== 'k');
     if (hit[0]) out.push(`ça attaque ${the(hit[0].type, foe)} en ${tok(hit[0].square)}`);
   }
-  if (m.san.endsWith('+')) out.push('ça force le roi adverse à réagir');
   const pawns = c1.board().flat().filter((p) => p && p.type === 'p');
   if (m.piece === 'k' && pawns.length && !board0.some((p) => p.type === 'q')) {
     const dist = (sq) => Math.min(...pawns.map((p) => Math.max(Math.abs(fileIdx(p.square) - fileIdx(sq)), Math.abs(+p.square[1] - +sq[1]))));
@@ -630,8 +656,15 @@ function purposes({ fenBefore, steps, mover, prev }) {
     if (!c1.inCheck()) { try { after = legalOn(flipTurn(first.fen), m.to); } catch { after = 0; } }
     if (after >= before + 3) out.push(`ça donne plus de cases ${FEM[m.piece] ? 'à la' : 'au'} ${NAME[m.piece]}`);
   }
-  if (steps[2] && steps[2].m.color === mover) out.push(`l’idée est de continuer par ${tok(steps[2].m.san)}`);
-  else if (steps[1]) out.push(`la réponse attendue est ${tok(steps[1].m.san)}`);
+  const n2 = steps[2] && steps[2].m;
+  const back = n2 && n2.from === m.to && (n2.to === m.from || (m.piece !== 'k' && (mover === 'w' ? +n2.to[1] < +n2.from[1] : +n2.to[1] > +n2.from[1])));
+  const idea = n2 && n2.color === mover && !back;
+  if (idea) out.push(`l’idée est de continuer par ${tok(n2.san)}`);
+  if (m.san.endsWith('+')) {
+    const only = steps[1] && new Chess(first.fen).moves().length === 1;
+    out.push(only ? `ça donne échec, et ${tok(steps[1].m.san)} est le seul coup` : 'ça donne échec');
+  }
+  if (!idea && steps[1]) out.push(`la réponse attendue est ${tok(steps[1].m.san)}`);
   return out;
 }
 
@@ -664,7 +697,8 @@ function threatensMate(fen) {
 function clause(s, prevStep, { own, first }) {
   const m = s.m;
   // La couleur n'est précisée que là où on pourrait confondre : les rois, et deux pièces identiques à la suite.
-  const who = m.piece === 'k' || (prevStep && prevStep.m.piece === m.piece) ? the(m.piece, m.color) : le(m.piece);
+  const chain = m.captured && prevStep && prevStep.m.captured && prevStep.m.to === m.to;
+  const who = m.piece === 'k' || chain || (prevStep && prevStep.m.piece === m.piece) ? the(m.piece, m.color) : le(m.piece);
   const mate = m.san.endsWith('#'); const chk = m.san.endsWith('+');
   if (m.san.startsWith('O-O')) return `${side(m.color)} roquent`;
   if (first && !own && !(m.captured && prevStep.m.to === m.to) && (chk || m.promotion) && !mate) return `après ${tok(m.san)}`;
@@ -1006,7 +1040,9 @@ function explainMoveInner({ fenBefore, fenAfter, ply, before, after, move, index
     const chosen = pick(describe(own), avoid);
     // Pas de « légèrement mieux » quand le coup joué mène lui-même au mat.
     const mating = mateFor(after.score) > 0;
-    return { sentences: [special, chosen ? sentence(chosen) : ''].filter(Boolean), notes: mating ? [] : [`Légèrement mieux : ${action}.`], line, key: keyOf(chosen || '') };
+    // Pas non plus pour un coup « excellent » : l'écart avec le meilleur coup est négligeable.
+    const note = !mating && move.loss >= 2;
+    return { sentences: [special, chosen ? sentence(chosen) : ''].filter(Boolean), notes: note ? [`Légèrement mieux : ${action}.`] : [], line, key: keyOf(chosen || '') };
   }
   // Sans raison prouvée, on décrit l'effet du coup conseillé sans le présenter comme une preuve.
   // Rien de concret à reprocher au coup joué : on nomme au moins la réponse qui le punit.
@@ -1044,7 +1080,7 @@ function explainMoveInner({ fenBefore, fenAfter, ply, before, after, move, index
   if (grave) for (let k = proven.length - 1; k >= 0; k -= 1) if (WEAK.test(proven[k])) proven.splice(k, 1);
   // Un échange conseillé se dit comme tel (c'est un fait, pas une preuve).
   const tradeTxt = why.find((t) => /^ça échange/.test(t)) || '';
-  const effect = proven[0] ? '' : grave ? stops : stops || tradeTxt || purposes({ fenBefore, steps: bestSteps, mover, prev }).find((t) => !/^l’idée|^la réponse|hors de l’échec|parer l’échec|qui donnait échec/.test(t)) || general[0];
+  const effect = proven[0] ? '' : grave ? stops : stops || tradeTxt || purposes({ fenBefore, steps: bestSteps, mover, prev }).find((t) => !/^l’idée|^la réponse|hors de l’échec|parer l’échec|qui donnait échec/.test(t) && !(/^ça donne échec/.test(t) && /^donner échec/.test(action))) || general[0];
   let better;
   if (st && st.sac && st.text) better = `Mieux valait ${action} : ${withStory('', st)}.`;
   else if (st && st.text && st.later && !st.open && proven[0] && /en même temps/.test(proven[0])) better = `Mieux valait ${action} : ${proven[0]}. ${cap(withStory('', st))}.`;
